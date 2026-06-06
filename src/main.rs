@@ -840,7 +840,8 @@ impl App {
             KeyCode::Char('d') => {
                 // Delete file/directory
                 if let Some(entry) = self.explorer.selected() {
-                    if let Err(e) = self.explorer.delete(&entry.path) {
+                    let path = entry.path.clone();
+                    if let Err(e) = self.explorer.delete(&path) {
                         self.message = Some(format!("Error: {}", e));
                     }
                 }
@@ -1133,7 +1134,7 @@ fn run_editor(files: Vec<PathBuf>) -> io::Result<()> {
         // Render
         let message = app.message.as_deref();
         if let Some(tab) = app.tab_manager.active() {
-            let lines = tab.buffer.lines().to_vec();
+            let _lines = tab.buffer.lines().to_vec();
             renderer.render(
                 &app.tab_manager,
                 &mut app.view,

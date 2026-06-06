@@ -58,7 +58,7 @@ impl<'a> Renderer<'a> {
         view.update_line_number_width(lines.len());
         view.ensure_cursor_visible(cursor, lines);
 
-        let (vis_start, vis_end) = view.visible_line_range();
+        let (vis_start, _vis_end) = view.visible_line_range();
 
         self.render_tab_bar(tab_manager, term_cols as usize)?;
 
@@ -335,7 +335,7 @@ impl<'a> Renderer<'a> {
         &mut self,
         tab_manager: &TabManager,
         cursor: &Cursor,
-        total_lines: usize,
+        _total_lines: usize,
         width: usize,
         _term_rows: u16,
     ) -> io::Result<()> {
@@ -425,7 +425,7 @@ impl<'a> Renderer<'a> {
     }
 
     pub fn render_splash(&mut self) -> io::Result<()> {
-        let (cols, rows) = crossterm::terminal::size()?;
+        let (_cols, rows) = crossterm::terminal::size()?;
         queue!(self.stdout, Clear(ClearType::All))?;
 
         let center_row = rows / 2;

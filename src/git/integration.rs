@@ -125,48 +125,34 @@ impl GitIntegration {
 
         let mut diff_lines = Vec::new();
 
-        for delta in diff.deltas() {
-            let new_path = delta.new_file().path().and_then(|p| p.to_str()).unwrap_or("");
-            let old_path = delta.old_file().path().and_then(|p| p.to_str()).unwrap_or("");
+        diff.foreach(
+            &mut |delta, _| {
+                // Only process files matching the requested path
+                let new_path = delta.new_file().path().and_then(|p| p.to_str()).unwrap_or("");
+                let old_path = delta.old_file().path().and_then(|p| p.to_str()).unwrap_or("");
+                new_path == file_path || old_path == file_path
+            },
+            &mut |_, _| true,
+            &mut |_, _| true,
+            &mut |_, _, line| {
+                let kind = match line.origin() {
+                    '+' => DiffLineKind::Addition,
+                    '-' => DiffLineKind::Deletion,
+                    _ => DiffLineKind::Context,
+                };
 
-            if new_path != file_path && old_path != file_path {
-                continue;
-            }
+                let content = String::from_utf8_lossy(line.content()).to_string();
 
-            // Get the patches for this delta
-            let patch_result = git2::Patch::from_diff(&diff, delta.nfiles() as usize);
-            let patch = match patch_result {
-                Ok(Some(p)) => p,
-                Ok(None) => continue,
-                Err(_) => continue,
-            };
-
-            for hunk_idx in 0..patch.num_hunks() {
-                let hunk = patch.hunk(hunk_idx)
-                    .map_err(|e| format!("Failed to get hunk: {}", e.message()))?;
-                let num_lines = hunk.num_lines();
-
-                for line_idx in 0..num_lines {
-                    let line = patch.line(hunk_idx, line_idx)
-                        .map_err(|e| format!("Failed to get line: {}", e.message()))?;
-
-                    let kind = match line.origin() {
-                        '+' => DiffLineKind::Addition,
-                        '-' => DiffLineKind::Deletion,
-                        _ => DiffLineKind::Context,
-                    };
-
-                    let content = String::from_utf8_lossy(line.content()).to_string();
-
-                    diff_lines.push(DiffLine {
-                        old_line: line.old_lineno(),
-                        new_line: line.new_lineno(),
-                        content,
-                        kind,
-                    });
-                }
-            }
-        }
+                diff_lines.push(DiffLine {
+                    old_line: line.old_lineno(),
+                    new_line: line.new_lineno(),
+                    content,
+                    kind,
+                });
+                true
+            },
+        )
+        .map_err(|e| format!("Failed to iterate diff: {}", e.message()))?;
 
         Ok(diff_lines)
     }
