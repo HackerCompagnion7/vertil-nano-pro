@@ -238,7 +238,7 @@ impl Selection {
             } else {
                 usize::MAX
             };
-            ranges.push((line_num, s, e, false));
+            ranges.push((line_num, s, e, 0));
         }
         ranges
     }

@@ -1,5 +1,4 @@
 use crate::editor::cursor::Cursor;
-use crate::editor::buffer::Buffer;
 use unicode_width::UnicodeWidthStr;
 
 pub struct View {
@@ -17,25 +16,23 @@ impl View {
             scroll_y: 0,
             scroll_x: 0,
             visible_width: width,
-            visible_height: height.saturating_sub(3), // Reserve for status bar and tabs
+            visible_height: height.saturating_sub(3),
             line_number_width: 4,
             soft_wrap: false,
         }
     }
 
     pub fn ensure_cursor_visible(&mut self, cursor: &Cursor, lines: &[String]) {
-        // Vertical scrolling
         if cursor.line < self.scroll_y {
             self.scroll_y = cursor.line;
         } else if cursor.line >= self.scroll_y + self.visible_height {
             self.scroll_y = cursor.line - self.visible_height + 1;
         }
 
-        // Horizontal scrolling
         let line = lines.get(cursor.line).map_or("", |l| l.as_str());
-        let cursor_visual_col = UnicodeWidthStr::width(
-            line[..cursor.col.min(line.len())].as_ref()
-        );
+        let col = cursor.col.min(line.len());
+        let before_cursor = &line[..col];
+        let cursor_visual_col = UnicodeWidthStr::width(before_cursor);
 
         let content_start = self.line_number_width + 1;
         let content_width = self.visible_width.saturating_sub(content_start);
@@ -107,7 +104,6 @@ impl View {
         } else {
             self.scroll_y = 0;
         }
-        // Don't scroll past the end
         let max_scroll = total_lines.saturating_sub(self.visible_height);
         if self.scroll_y > max_scroll {
             self.scroll_y = max_scroll;

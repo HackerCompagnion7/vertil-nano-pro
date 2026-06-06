@@ -12,12 +12,9 @@ use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind},
-    terminal,
-};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
-use editor::{Buffer, BufferPosition, Cursor, Selection, SelectionMode, TabManager, View};
+use editor::{Buffer, BufferPosition, BufferRange, Cursor, Selection, SelectionMode, TabManager, View};
 use ui::Renderer;
 use config::{KeybindingSet, Settings};
 use clipboard::{ClipboardManager, ClipKind};

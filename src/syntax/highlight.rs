@@ -1,4 +1,4 @@
-use tree_sitter::{Parser, Query, QueryCursor, Tree};
+use tree_sitter::{Parser, Tree};
 use std::sync::Mutex;
 
 #[derive(Debug, Clone)]
@@ -14,8 +14,7 @@ pub struct HighlightEngine {
 
 impl HighlightEngine {
     pub fn new() -> Self {
-        let mut parser = Parser::new();
-        // Default language will be set per-buffer
+        let parser = Parser::new();
         Self {
             parser: Mutex::new(parser),
         }
@@ -37,7 +36,6 @@ impl HighlightEngine {
             _ => return self.fallback_highlight(line),
         };
 
-        // Set the language for the parser
         let mut parser = self.parser.lock().unwrap();
         let language_obj = self.get_language(language_id);
         if language_obj.is_none() {
@@ -57,13 +55,13 @@ impl HighlightEngine {
 
     fn get_language(&self, lang_id: &str) -> Option<tree_sitter::Language> {
         match lang_id {
-            "python" => Some(tree_sitter_python::language()),
-            "javascript" => Some(tree_sitter_javascript::language()),
-            "typescript" => Some(tree_sitter_typescript::language_typescript()),
-            "go" => Some(tree_sitter_go::language()),
-            "rust" => Some(tree_sitter_rust::language()),
-            "c" => Some(tree_sitter_c::language()),
-            "cpp" => Some(tree_sitter_cpp::language()),
+            "python" => Some(tree_sitter_python::LANGUAGE.into()),
+            "javascript" => Some(tree_sitter_javascript::LANGUAGE.into()),
+            "typescript" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+            "go" => Some(tree_sitter_go::LANGUAGE.into()),
+            "rust" => Some(tree_sitter_rust::LANGUAGE.into()),
+            "c" => Some(tree_sitter_c::LANGUAGE.into()),
+            "cpp" => Some(tree_sitter_cpp::LANGUAGE.into()),
             _ => None,
         }
     }
@@ -74,7 +72,6 @@ impl HighlightEngine {
 
         self.walk_node(root, source, &mut spans);
 
-        // Sort and merge overlapping spans
         spans.sort_by_key(|s| s.start);
         self.merge_overlapping(&mut spans);
 
@@ -105,7 +102,6 @@ impl HighlightEngine {
     fn node_to_token_type(&self, node: &tree_sitter::Node) -> u32 {
         let kind = node.kind();
 
-        // Keywords
         match kind {
             // Python keywords
             "import" | "from" | "as" | "def" | "class" | "return" | "if" | "elif" | "else" |
@@ -116,7 +112,7 @@ impl HighlightEngine {
             // JS/TS keywords
             "function" | "const" | "let" | "var" | "new" | "this" | "super" | "extends" |
             "typeof" | "instanceof" | "void" | "delete" | "throw" | "switch" | "case" |
-            "default" | "do" | "export" | "import" | "from" | "as" | "type" | "interface" |
+            "default" | "do" | "export" | "type" | "interface" |
             "enum" | "implements" | "abstract" | "private" | "protected" | "public" |
             "static" | "readonly" | "namespace" | "module" | "declare" |
 
@@ -130,10 +126,10 @@ impl HighlightEngine {
 
             // C/C++ keywords
             "int" | "char" | "float" | "double" | "long" | "short" | "unsigned" | "signed" |
-            "void" | "auto" | "register" | "volatile" | "extern" | "inline" | "sizeof" |
-            "typedef" | "union" | "namespace" | "template" | "typename" | "virtual" |
+            "auto" | "register" | "volatile" | "inline" | "sizeof" |
+            "typedef" | "union" | "template" | "typename" | "virtual" |
             "override" | "final" | "constexpr" | "nullptr" | "static_cast" | "dynamic_cast" |
-            "reinterpret_cast" | "const_cast" => 1, // keyword
+            "reinterpret_cast" | "const_cast" => 1,
 
             // Strings
             "string" | "string_literal" | "string_content" | "raw_string_literal" |
@@ -149,9 +145,9 @@ impl HighlightEngine {
             "decorator" | "call" | "call_expression" | "function_call" => 4,
 
             // Types
-            "type_identifier" | "type" | "struct" | "enum" | "class_definition" |
+            "type_identifier" | "struct" | "enum" | "class_definition" |
             "class_declaration" | "interface_declaration" | "struct_item" | "enum_item" |
-            "type_identifier" | "primitive_type" | "built_in_type" => 5,
+            "primitive_type" | "built_in_type" => 5,
 
             // Numbers
             "integer" | "float" | "number" | "integer_literal" | "float_literal" |
@@ -182,7 +178,7 @@ impl HighlightEngine {
             "tag_name" | "tag" | "start_tag" | "end_tag" | "self_closing_tag" => 12,
 
             // Attributes
-            "attribute_name" | "attribute_value" | "decorator" => 13,
+            "attribute_name" | "attribute_value" => 13,
 
             // Escape sequences
             "escape_sequence" | "escape" => 14,
@@ -202,7 +198,6 @@ impl HighlightEngine {
         for span in spans.iter().skip(1) {
             let last = merged.last_mut().unwrap();
             if span.start <= last.end {
-                // Overlapping: keep the one with higher priority (lower token_type = higher priority)
                 if span.token_type > 0 && (last.token_type == 0 || span.start < last.start) {
                     last.end = last.end.max(span.end);
                     last.token_type = span.token_type;
@@ -226,7 +221,7 @@ impl HighlightEngine {
             spans.push(HighlightSpan {
                 start: 0,
                 end: line.len(),
-                token_type: 3, // comment
+                token_type: 3,
             });
             return spans;
         }
@@ -245,13 +240,12 @@ impl HighlightEngine {
                 spans.push(HighlightSpan {
                     start: string_start,
                     end: i + 1,
-                    token_type: 2, // string
+                    token_type: 2,
                 });
                 in_string = false;
             }
         }
 
-        // If unclosed string, highlight to end
         if in_string {
             spans.push(HighlightSpan {
                 start: string_start,
@@ -260,7 +254,7 @@ impl HighlightEngine {
             });
         }
 
-        // Simple keyword detection for common languages
+        // Simple keyword detection
         let keywords = [
             "fn", "pub", "use", "mod", "struct", "enum", "impl", "trait", "let", "mut", "if",
             "else", "for", "while", "loop", "match", "return", "break", "continue", "where",

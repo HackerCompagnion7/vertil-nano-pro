@@ -1,3 +1,3 @@
 pub mod engine;
 
-pub use engine::{SearchEngine, GlobalSearch, SearchResult};
+pub use engine::{SearchEngine, GlobalSearch};
