@@ -1710,6 +1710,8 @@ fn main() {
         .version(VERSION)
         .author(AUTHOR)
         .about("Modern terminal code editor -- simple like Nano, powerful for 2026")
+        .disable_version_flag(true)
+        .disable_help_flag(true)
         .arg(
             clap::Arg::new("files")
                 .help("Files to open")
@@ -1724,9 +1726,16 @@ fn main() {
         )
         .arg(
             clap::Arg::new("version")
-                .short('v')
+                .short('V')
                 .long("version")
                 .help("Show version")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            clap::Arg::new("help")
+                .short('h')
+                .long("help")
+                .help("Show help")
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
@@ -1737,6 +1746,24 @@ fn main() {
         );
 
     let matches = cli.get_matches();
+
+    if matches.get_flag("help") {
+        println!("Vertil Nano Pro v{} - Modern terminal code editor", VERSION);
+        println!("Author: {}", AUTHOR);
+        println!();
+        println!("USAGE:");
+        println!("    nanopro [OPTIONS] [FILES]...");
+        println!();
+        println!("ARGS:");
+        println!("    <FILES>...    Files to open");
+        println!();
+        println!("OPTIONS:");
+        println!("    -h, --help       Show help");
+        println!("    -V, --version    Show version");
+        println!("        --about      Show information about Vertil Nano Pro");
+        println!("        --theme      Set theme (dark/light)");
+        return;
+    }
 
     if matches.get_flag("about") {
         print_about();
