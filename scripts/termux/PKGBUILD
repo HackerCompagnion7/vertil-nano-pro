@@ -1,0 +1,27 @@
+# Vertil Nano Pro - Termux Build Metadata
+
+pkgname=nanopro
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Modern terminal code editor — simple like Nano, powerful for 2026"
+arch=('aarch64' 'arm' 'x86_64' 'i686')
+url="https://github.com/ishmaelvertil/vertil-nano-pro"
+license=('MIT')
+depends=('libgit2')
+makedepends=('rust' 'cargo' 'cmake')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$pkgname-$pkgver"
+    cargo build --release
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    install -Dm755 target/release/nanopro "$pkgdir/usr/bin/nanopro"
+    install -Dm644 themes/dark.toml "$pkgdir/etc/nanopro/themes/dark.toml"
+    install -Dm644 themes/light.toml "$pkgdir/etc/nanopro/themes/light.toml"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/nanopro/LICENSE"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/nanopro/README.md"
+}

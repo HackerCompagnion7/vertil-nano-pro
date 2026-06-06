@@ -1,0 +1,17 @@
+# Build artifacts
+/target/
+**/*.rs.bk
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Config
+nanopro.toml
+
+# OS
+Thumbs.db

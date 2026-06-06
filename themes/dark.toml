@@ -1,0 +1,160 @@
+# Vertil Nano Pro - Dark Theme
+# Based on Catppuccin Mocha color palette
+
+[theme]
+name = "Vertil Dark"
+
+[theme.background]
+r = 30
+g = 30
+b = 46
+
+[theme.foreground]
+r = 205
+g = 214
+b = 244
+
+[theme.selection_bg]
+r = 68
+g = 71
+b = 110
+
+[theme.selection_fg]
+r = 205
+g = 214
+b = 244
+
+[theme.line_number_fg]
+r = 88
+g = 91
+b = 112
+
+[theme.line_number_active_fg]
+r = 166
+g = 173
+b = 200
+
+[theme.status_bar_bg]
+r = 49
+g = 50
+b = 68
+
+[theme.status_bar_fg]
+r = 205
+g = 214
+b = 244
+
+[theme.tab_bar_bg]
+r = 24
+g = 24
+b = 37
+
+[theme.tab_bar_fg]
+r = 166
+g = 173
+b = 200
+
+[theme.tab_active_bg]
+r = 30
+g = 30
+b = 46
+
+[theme.tab_active_fg]
+r = 137
+g = 180
+b = 250
+
+[theme.shortcut_bar_bg]
+r = 49
+g = 50
+b = 68
+
+[theme.shortcut_bar_fg]
+r = 166
+g = 173
+b = 200
+
+[theme.keyword]
+r = 203
+g = 166
+b = 247
+
+[theme.string_literal]
+r = 166
+g = 227
+b = 161
+
+[theme.comment]
+r = 88
+g = 91
+b = 112
+
+[theme.function_]
+r = 137
+g = 180
+b = 250
+
+[theme.type_]
+r = 249
+g = 226
+b = 175
+
+[theme.number]
+r = 250
+g = 179
+b = 135
+
+[theme.operator]
+r = 137
+g = 220
+b = 235
+
+[theme.variable]
+r = 205
+g = 214
+b = 244
+
+[theme.constant]
+r = 250
+g = 179
+b = 135
+
+[theme.property]
+r = 166
+g = 227
+b = 161
+
+[theme.punctuation]
+r = 186
+g = 194
+b = 222
+
+[theme.tag]
+r = 137
+g = 180
+b = 250
+
+[theme.attribute]
+r = 249
+g = 226
+b = 175
+
+[theme.escape_]
+r = 245
+g = 224
+b = 220
+
+[theme.error_]
+r = 243
+g = 139
+b = 168
+
+[theme.warning_]
+r = 249
+g = 226
+b = 175
+
+[theme.info_]
+r = 137
+g = 180
+b = 250

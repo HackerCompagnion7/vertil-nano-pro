@@ -1,0 +1,160 @@
+# Vertil Nano Pro - Light Theme
+# Based on Catppuccin Latte color palette
+
+[theme]
+name = "Vertil Light"
+
+[theme.background]
+r = 239
+g = 241
+b = 245
+
+[theme.foreground]
+r = 76
+g = 79
+b = 105
+
+[theme.selection_bg]
+r = 220
+g = 222
+b = 232
+
+[theme.selection_fg]
+r = 76
+g = 79
+b = 105
+
+[theme.line_number_fg]
+r = 172
+g = 176
+b = 190
+
+[theme.line_number_active_fg]
+r = 76
+g = 79
+b = 105
+
+[theme.status_bar_bg]
+r = 204
+g = 208
+b = 218
+
+[theme.status_bar_fg]
+r = 76
+g = 79
+b = 105
+
+[theme.tab_bar_bg]
+r = 204
+g = 208
+b = 218
+
+[theme.tab_bar_fg]
+r = 92
+g = 95
+b = 119
+
+[theme.tab_active_bg]
+r = 239
+g = 241
+b = 245
+
+[theme.tab_active_fg]
+r = 30
+g = 102
+b = 245
+
+[theme.shortcut_bar_bg]
+r = 204
+g = 208
+b = 218
+
+[theme.shortcut_bar_fg]
+r = 92
+g = 95
+b = 119
+
+[theme.keyword]
+r = 136
+g = 57
+b = 239
+
+[theme.string_literal]
+r = 64
+g = 160
+b = 43
+
+[theme.comment]
+r = 172
+g = 176
+b = 190
+
+[theme.function_]
+r = 30
+g = 102
+b = 245
+
+[theme.type_]
+r = 183
+g = 135
+b = 18
+
+[theme.number]
+r = 219
+g = 85
+b = 30
+
+[theme.operator]
+r = 23
+g = 146
+b = 156
+
+[theme.variable]
+r = 76
+g = 79
+b = 105
+
+[theme.constant]
+r = 219
+g = 85
+b = 30
+
+[theme.property]
+r = 64
+g = 160
+b = 43
+
+[theme.punctuation]
+r = 108
+g = 111
+b = 133
+
+[theme.tag]
+r = 30
+g = 102
+b = 245
+
+[theme.attribute]
+r = 183
+g = 135
+b = 18
+
+[theme.escape_]
+r = 222
+g = 100
+b = 100
+
+[theme.error_]
+r = 210
+g = 55
+b = 75
+
+[theme.warning_]
+r = 183
+g = 135
+b = 18
+
+[theme.info_]
+r = 30
+g = 102
+b = 245

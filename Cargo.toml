@@ -1,0 +1,50 @@
+[package]
+name = "vertil-nano-pro"
+version = "1.0.0"
+edition = "2021"
+authors = ["Ishmael Vertil"]
+description = "Modern terminal code editor — simple like Nano, powerful for 2026"
+license = "MIT"
+repository = "https://github.com/ishmaelvertil/vertil-nano-pro"
+keywords = ["editor", "terminal", "code", "nano", "tui"]
+categories = ["command-line-utilities", "text-editors"]
+readme = "README.md"
+
+[[bin]]
+name = "nanopro"
+path = "src/main.rs"
+
+[dependencies]
+crossterm = "0.28"
+tree-sitter = "0.24"
+tree-sitter-python = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-rust = "0.23"
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+git2 = { version = "0.19", default-features = false }
+walkdir = "2"
+regex = "1"
+toml = "0.8"
+unicode-width = "0.2"
+unicode-segmentation = "1"
+log = "0.4"
+env_logger = "0.11"
+lsp-types = "0.97"
+signal-hook = "0.3"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
