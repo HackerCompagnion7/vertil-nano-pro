@@ -7,6 +7,7 @@ pub struct View {
     pub visible_width: usize,
     pub visible_height: usize,
     pub line_number_width: usize,
+    #[allow(dead_code)]
     pub soft_wrap: bool,
 }
 

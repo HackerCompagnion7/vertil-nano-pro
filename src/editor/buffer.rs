@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use std::time::Instant;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct BufferChange {
     pub kind: ChangeKind,
     pub range: BufferRange,
@@ -11,7 +11,6 @@ pub struct BufferChange {
     pub timestamp: Instant,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ChangeKind {
     Insert,
@@ -110,10 +109,13 @@ pub struct Buffer {
     undo_stack: Vec<BufferChange>,
     redo_stack: Vec<BufferChange>,
     last_save_time: Option<Instant>,
+    #[allow(dead_code)]
     file_encoding: String,
+    /// When true, edit operations automatically record undo entries.
+    /// Set to false during undo/redo to prevent recursive recording.
+    tracking: bool,
 }
 
-#[allow(dead_code)]
 impl Buffer {
     pub fn new() -> Self {
         Self {
@@ -124,6 +126,7 @@ impl Buffer {
             redo_stack: Vec::new(),
             last_save_time: None,
             file_encoding: "UTF-8".to_string(),
+            tracking: true,
         }
     }
 
@@ -149,9 +152,11 @@ impl Buffer {
             redo_stack: Vec::new(),
             last_save_time: Some(Instant::now()),
             file_encoding: "UTF-8".to_string(),
+            tracking: true,
         })
     }
 
+    #[allow(dead_code)]
     pub fn from_content(content: &str, path: Option<PathBuf>) -> Self {
         let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
         if lines.is_empty() {
@@ -169,6 +174,7 @@ impl Buffer {
             redo_stack: Vec::new(),
             last_save_time: None,
             file_encoding: "UTF-8".to_string(),
+            tracking: true,
         }
     }
 
@@ -176,6 +182,7 @@ impl Buffer {
         self.path.as_deref()
     }
 
+    #[allow(dead_code)]
     pub fn set_path(&mut self, path: PathBuf) {
         self.path = Some(path);
     }
@@ -192,6 +199,7 @@ impl Buffer {
         self.dirty
     }
 
+    #[allow(dead_code)]
     pub fn set_dirty(&mut self, dirty: bool) {
         self.dirty = dirty;
     }
@@ -212,10 +220,12 @@ impl Buffer {
         &self.lines
     }
 
+    #[allow(dead_code)]
     pub fn line_len(&self, line: usize) -> usize {
         self.lines.get(line).map_or(0, |l| l.len())
     }
 
+    #[allow(dead_code)]
     pub fn char_count(&self) -> usize {
         self.lines.iter().map(|l| l.len()).sum::<usize>() + self.lines.len().saturating_sub(1)
     }
@@ -224,22 +234,87 @@ impl Buffer {
         self.lines.join("\n")
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.lines.len() == 1 && self.lines[0].is_empty() && !self.dirty
     }
 
-    pub fn insert_char(&mut self, pos: BufferPosition, ch: char) {
+    /// Helper: extract text in a given range (used for undo of delete operations)
+    fn get_text_in_range(&self, range: BufferRange) -> String {
+        let start = range.start;
+        let end = range.end;
+
+        if start.line >= self.lines.len() || end.line >= self.lines.len() {
+            return String::new();
+        }
+
+        if start.line == end.line {
+            let line = &self.lines[start.line];
+            let s = start.col.min(line.len());
+            let e = end.col.min(line.len());
+            line[s..e].to_string()
+        } else {
+            let mut result = String::new();
+
+            // First line
+            if let Some(first_line) = self.lines.get(start.line) {
+                let s = start.col.min(first_line.len());
+                result.push_str(&first_line[s..]);
+                result.push('\n');
+            }
+
+            // Middle lines
+            for line_num in (start.line + 1)..end.line {
+                if let Some(line) = self.lines.get(line_num) {
+                    result.push_str(line);
+                    result.push('\n');
+                }
+            }
+
+            // Last line
+            if let Some(last_line) = self.lines.get(end.line) {
+                let e = end.col.min(last_line.len());
+                result.push_str(&last_line[..e]);
+            }
+
+            result
+        }
+    }
+
+    /// Helper: compute the end position after inserting text at a position
+    fn compute_end_after_insert(&self, pos: BufferPosition, text: &str) -> BufferPosition {
+        if pos.line >= self.lines.len() {
+            return pos;
+        }
+
+        let col = pos.col.min(self.lines[pos.line].len());
+        let split_lines: Vec<&str> = text.split('\n').collect();
+
+        if split_lines.len() == 1 {
+            BufferPosition::new(pos.line, col + text.len())
+        } else {
+            let after_len = self.lines[pos.line].len() - col;
+            let last_seg = split_lines.last().unwrap();
+            BufferPosition::new(
+                pos.line + split_lines.len() - 1,
+                last_seg.len() + after_len,
+            )
+        }
+    }
+
+    // === Raw edit methods (no undo tracking, used by undo/redo) ===
+
+    #[allow(dead_code)]
+    fn insert_char_raw(&mut self, pos: BufferPosition, ch: char) {
         if pos.line >= self.lines.len() {
             return;
         }
-        let line = &mut self.lines[pos.line];
-        let col = pos.col.min(line.len());
-        line.insert(col, ch);
+        let col = pos.col.min(self.lines[pos.line].len());
+        self.lines[pos.line].insert(col, ch);
         self.dirty = true;
-        self.redo_stack.clear();
     }
 
-    pub fn insert_str(&mut self, pos: BufferPosition, text: &str) {
+    fn insert_str_raw(&mut self, pos: BufferPosition, text: &str) {
         if pos.line >= self.lines.len() || text.is_empty() {
             return;
         }
@@ -274,74 +349,9 @@ impl Buffer {
         }
 
         self.dirty = true;
-        self.redo_stack.clear();
     }
 
-    pub fn delete_char(&mut self, pos: BufferPosition) -> bool {
-        if pos.line >= self.lines.len() {
-            return false;
-        }
-
-        let line_len = self.lines[pos.line].len();
-
-        if pos.col < line_len {
-            self.lines[pos.line].remove(pos.col);
-            self.dirty = true;
-            self.redo_stack.clear();
-            return true;
-        } else if pos.col == line_len && pos.line + 1 < self.lines.len() {
-            let next_line = self.lines.remove(pos.line + 1);
-            self.lines[pos.line].push_str(&next_line);
-            self.dirty = true;
-            self.redo_stack.clear();
-            return true;
-        }
-
-        false
-    }
-
-    pub fn backspace(&mut self, pos: BufferPosition) -> Option<BufferPosition> {
-        if pos.line >= self.lines.len() {
-            return None;
-        }
-
-        if pos.col > 0 {
-            self.lines[pos.line].remove(pos.col - 1);
-            self.dirty = true;
-            self.redo_stack.clear();
-            return Some(BufferPosition::new(pos.line, pos.col - 1));
-        } else if pos.line > 0 {
-            let prev_line_len = self.lines[pos.line - 1].len();
-            let current_line = self.lines.remove(pos.line);
-            self.lines[pos.line - 1].push_str(&current_line);
-            self.dirty = true;
-            self.redo_stack.clear();
-            return Some(BufferPosition::new(pos.line - 1, prev_line_len));
-        }
-
-        None
-    }
-
-    pub fn insert_newline(&mut self, pos: BufferPosition) -> BufferPosition {
-        if pos.line >= self.lines.len() {
-            return pos;
-        }
-
-        let col = pos.col.min(self.lines[pos.line].len());
-        let current_line = self.lines[pos.line].clone();
-        let before = current_line[..col].to_string();
-        let after = current_line[col..].to_string();
-
-        self.lines[pos.line] = before;
-        self.lines.insert(pos.line + 1, after);
-
-        self.dirty = true;
-        self.redo_stack.clear();
-
-        BufferPosition::new(pos.line + 1, 0)
-    }
-
-    pub fn delete_range(&mut self, range: BufferRange) {
+    fn delete_range_raw(&mut self, range: BufferRange) {
         let start = range.start;
         let end = range.end;
 
@@ -375,10 +385,230 @@ impl Buffer {
         }
 
         self.dirty = true;
-        self.redo_stack.clear();
     }
 
+    // === Public edit methods with undo tracking ===
+
+    pub fn insert_char(&mut self, pos: BufferPosition, ch: char) {
+        if pos.line >= self.lines.len() {
+            return;
+        }
+        let col = pos.col.min(self.lines[pos.line].len());
+        let end_pos = BufferPosition::new(pos.line, col + ch.len_utf8());
+
+        if self.tracking {
+            self.undo_stack.push(BufferChange {
+                kind: ChangeKind::Insert,
+                range: BufferRange::new(pos, end_pos),
+                text: ch.to_string(),
+                timestamp: Instant::now(),
+            });
+            if self.undo_stack.len() > 1000 {
+                self.undo_stack.remove(0);
+            }
+            self.redo_stack.clear();
+        }
+
+        self.lines[pos.line].insert(col, ch);
+        self.dirty = true;
+    }
+
+    pub fn insert_str(&mut self, pos: BufferPosition, text: &str) {
+        if pos.line >= self.lines.len() || text.is_empty() {
+            return;
+        }
+
+        let end_pos = self.compute_end_after_insert(pos, text);
+
+        if self.tracking {
+            self.undo_stack.push(BufferChange {
+                kind: ChangeKind::Insert,
+                range: BufferRange::new(pos, end_pos),
+                text: text.to_string(),
+                timestamp: Instant::now(),
+            });
+            if self.undo_stack.len() > 1000 {
+                self.undo_stack.remove(0);
+            }
+            self.redo_stack.clear();
+        }
+
+        self.insert_str_raw(pos, text);
+    }
+
+    pub fn delete_char(&mut self, pos: BufferPosition) -> bool {
+        if pos.line >= self.lines.len() {
+            return false;
+        }
+
+        let line_len = self.lines[pos.line].len();
+
+        if pos.col < line_len {
+            // Delete character at pos
+            let deleted_char = self.lines[pos.line].chars().nth(pos.col).unwrap().to_string();
+            let end_pos = BufferPosition::new(pos.line, pos.col + deleted_char.len());
+
+            if self.tracking {
+                self.undo_stack.push(BufferChange {
+                    kind: ChangeKind::Delete,
+                    range: BufferRange::new(pos, end_pos),
+                    text: deleted_char,
+                    timestamp: Instant::now(),
+                });
+                if self.undo_stack.len() > 1000 {
+                    self.undo_stack.remove(0);
+                }
+                self.redo_stack.clear();
+            }
+
+            self.lines[pos.line].remove(pos.col);
+            self.dirty = true;
+            return true;
+        } else if pos.col == line_len && pos.line + 1 < self.lines.len() {
+            // Merge with next line
+            let next_line = self.lines[pos.line + 1].clone();
+
+            if self.tracking {
+                self.undo_stack.push(BufferChange {
+                    kind: ChangeKind::Delete,
+                    range: BufferRange::new(pos, BufferPosition::new(pos.line + 1, 0)),
+                    text: format!("\n{}", next_line),
+                    timestamp: Instant::now(),
+                });
+                if self.undo_stack.len() > 1000 {
+                    self.undo_stack.remove(0);
+                }
+                self.redo_stack.clear();
+            }
+
+            self.lines.remove(pos.line + 1);
+            self.lines[pos.line].push_str(&next_line);
+            self.dirty = true;
+            return true;
+        }
+
+        false
+    }
+
+    pub fn backspace(&mut self, pos: BufferPosition) -> Option<BufferPosition> {
+        if pos.line >= self.lines.len() {
+            return None;
+        }
+
+        if pos.col > 0 {
+            // Delete char before cursor
+            let line = &self.lines[pos.line];
+            let char_before = line[..pos.col].chars().last().map(|c| c.to_string())?;
+            let char_len = char_before.len();
+            let new_col = pos.col - char_len;
+
+            if self.tracking {
+                self.undo_stack.push(BufferChange {
+                    kind: ChangeKind::Delete,
+                    range: BufferRange::new(
+                        BufferPosition::new(pos.line, new_col),
+                        pos,
+                    ),
+                    text: char_before,
+                    timestamp: Instant::now(),
+                });
+                if self.undo_stack.len() > 1000 {
+                    self.undo_stack.remove(0);
+                }
+                self.redo_stack.clear();
+            }
+
+            self.lines[pos.line].remove(new_col);
+            self.dirty = true;
+            return Some(BufferPosition::new(pos.line, new_col));
+        } else if pos.line > 0 {
+            // Merge with previous line
+            let prev_line_len = self.lines[pos.line - 1].len();
+            let current_line = self.lines[pos.line].clone();
+
+            if self.tracking {
+                self.undo_stack.push(BufferChange {
+                    kind: ChangeKind::Delete,
+                    range: BufferRange::new(
+                        BufferPosition::new(pos.line - 1, prev_line_len),
+                        BufferPosition::new(pos.line, 0),
+                    ),
+                    text: format!("\n{}", current_line),
+                    timestamp: Instant::now(),
+                });
+                if self.undo_stack.len() > 1000 {
+                    self.undo_stack.remove(0);
+                }
+                self.redo_stack.clear();
+            }
+
+            let merged = self.lines.remove(pos.line);
+            self.lines[pos.line - 1].push_str(&merged);
+            self.dirty = true;
+            return Some(BufferPosition::new(pos.line - 1, prev_line_len));
+        }
+
+        None
+    }
+
+    pub fn insert_newline(&mut self, pos: BufferPosition) -> BufferPosition {
+        if pos.line >= self.lines.len() {
+            return pos;
+        }
+
+        let col = pos.col.min(self.lines[pos.line].len());
+        let current_line = self.lines[pos.line].clone();
+        let before = current_line[..col].to_string();
+        let after = current_line[col..].to_string();
+
+        if self.tracking {
+            self.undo_stack.push(BufferChange {
+                kind: ChangeKind::Insert,
+                range: BufferRange::new(pos, BufferPosition::new(pos.line + 1, 0)),
+                text: format!("\n{}", after),
+                timestamp: Instant::now(),
+            });
+            if self.undo_stack.len() > 1000 {
+                self.undo_stack.remove(0);
+            }
+            self.redo_stack.clear();
+        }
+
+        self.lines[pos.line] = before;
+        self.lines.insert(pos.line + 1, after);
+
+        self.dirty = true;
+
+        BufferPosition::new(pos.line + 1, 0)
+    }
+
+    pub fn delete_range(&mut self, range: BufferRange) {
+        if range.start.line >= self.lines.len() || range.end.line >= self.lines.len() {
+            return;
+        }
+
+        // Capture deleted text before deleting
+        let deleted_text = self.get_text_in_range(range);
+
+        if self.tracking {
+            self.undo_stack.push(BufferChange {
+                kind: ChangeKind::Delete,
+                range,
+                text: deleted_text,
+                timestamp: Instant::now(),
+            });
+            if self.undo_stack.len() > 1000 {
+                self.undo_stack.remove(0);
+            }
+            self.redo_stack.clear();
+        }
+
+        self.delete_range_raw(range);
+    }
+
+    #[allow(dead_code)]
     pub fn replace_range(&mut self, range: BufferRange, text: &str) {
+        // Use delete_range + insert_str which each handle undo tracking
         self.delete_range(range);
         self.insert_str(range.start, text);
     }
@@ -387,25 +617,96 @@ impl Buffer {
         if line >= self.lines.len() {
             return;
         }
+
+        let line_content = self.lines[line].clone();
+        let is_last = self.lines.len() == 1;
+
+        if self.tracking {
+            let end = if is_last {
+                BufferPosition::new(line, line_content.len())
+            } else {
+                BufferPosition::new(line + 1, 0)
+            };
+            let text = if is_last {
+                line_content.clone()
+            } else {
+                format!("{}\n", line_content)
+            };
+
+            self.undo_stack.push(BufferChange {
+                kind: ChangeKind::Delete,
+                range: BufferRange::new(BufferPosition::new(line, 0), end),
+                text,
+                timestamp: Instant::now(),
+            });
+            if self.undo_stack.len() > 1000 {
+                self.undo_stack.remove(0);
+            }
+            self.redo_stack.clear();
+        }
+
         self.lines.remove(line);
         if self.lines.is_empty() {
             self.lines.push(String::new());
         }
         self.dirty = true;
-        self.redo_stack.clear();
     }
 
+    #[allow(dead_code)]
     pub fn insert_line(&mut self, after_line: usize, content: String) {
         let insert_pos = (after_line + 1).min(self.lines.len());
+
+        if self.tracking {
+            self.undo_stack.push(BufferChange {
+                kind: ChangeKind::Delete,
+                range: BufferRange::new(
+                    BufferPosition::new(insert_pos, 0),
+                    BufferPosition::new(insert_pos, content.len()),
+                ),
+                text: content.clone(),
+                timestamp: Instant::now(),
+            });
+            // Note: Delete undo = re-insert, so we store as Delete with the text
+            // so undo will re-insert the line. This is a bit of a hack but works.
+            if self.undo_stack.len() > 1000 {
+                self.undo_stack.remove(0);
+            }
+            self.redo_stack.clear();
+        }
+
         self.lines.insert(insert_pos, content);
         self.dirty = true;
-        self.redo_stack.clear();
     }
 
     pub fn indent_line(&mut self, line: usize, tab_size: usize, use_spaces: bool) {
         if line >= self.lines.len() {
             return;
         }
+
+        let old_content = self.lines[line].clone();
+        let indent = if use_spaces {
+            " ".repeat(tab_size)
+        } else {
+            "\t".to_string()
+        };
+
+        if self.tracking {
+            let new_col = old_content.len() - old_content.trim_start().len() + indent.len();
+            self.undo_stack.push(BufferChange {
+                kind: ChangeKind::Delete,
+                range: BufferRange::new(
+                    BufferPosition::new(line, 0),
+                    BufferPosition::new(line, new_col),
+                ),
+                text: format!("{}{}", indent, old_content.trim_start()),
+                timestamp: Instant::now(),
+            });
+            if self.undo_stack.len() > 1000 {
+                self.undo_stack.remove(0);
+            }
+            self.redo_stack.clear();
+        }
+
         if use_spaces {
             self.lines[line].insert_str(0, &" ".repeat(tab_size));
         } else {
@@ -418,6 +719,25 @@ impl Buffer {
         if line >= self.lines.len() {
             return;
         }
+
+        let old_content = self.lines[line].clone();
+
+        if self.tracking {
+            self.undo_stack.push(BufferChange {
+                kind: ChangeKind::Insert,
+                range: BufferRange::new(
+                    BufferPosition::new(line, 0),
+                    BufferPosition::new(line, old_content.len()),
+                ),
+                text: old_content.clone(),
+                timestamp: Instant::now(),
+            });
+            if self.undo_stack.len() > 1000 {
+                self.undo_stack.remove(0);
+            }
+            self.redo_stack.clear();
+        }
+
         let line_str = &mut self.lines[line];
         if line_str.starts_with('\t') {
             line_str.remove(0);
@@ -451,6 +771,7 @@ impl Buffer {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn last_save_time(&self) -> Option<Instant> {
         self.last_save_time
     }
@@ -484,6 +805,7 @@ impl Buffer {
             .unwrap_or("plaintext")
     }
 
+    #[allow(dead_code)]
     pub fn push_undo(&mut self, change: BufferChange) {
         self.undo_stack.push(change);
         if self.undo_stack.len() > 1000 {
@@ -493,41 +815,88 @@ impl Buffer {
 
     pub fn undo(&mut self) -> Option<BufferPosition> {
         let change = self.undo_stack.pop()?;
+
+        // Disable tracking during undo to prevent recording inverse operations
+        self.tracking = false;
+
         match change.kind {
             ChangeKind::Insert => {
-                // Undo insert = delete
-                self.delete_range(change.range);
-                Some(change.range.start)
+                // Undo insert = delete the inserted text
+                self.delete_range_raw(change.range);
             }
             ChangeKind::Delete => {
-                // Undo delete = insert
-                self.insert_str(change.range.start, &change.text);
-                Some(change.range.start)
+                // Undo delete = re-insert the deleted text
+                self.insert_str_raw(change.range.start, &change.text);
             }
         }
+
+        // Re-enable tracking
+        self.tracking = true;
+
+        // Push to redo stack
+        self.redo_stack.push(change.clone());
+        if self.redo_stack.len() > 1000 {
+            self.redo_stack.remove(0);
+        }
+
+        Some(change.range.start)
     }
 
+    #[allow(dead_code)]
     pub fn can_undo(&self) -> bool {
         !self.undo_stack.is_empty()
     }
 
     pub fn redo(&mut self) -> Option<BufferPosition> {
         let change = self.redo_stack.pop()?;
+
+        // Disable tracking during redo
+        self.tracking = false;
+
         match change.kind {
             ChangeKind::Insert => {
-                self.insert_str(change.range.start, &change.text);
-                Some(BufferPosition::new(
-                    change.range.end.line,
-                    change.range.end.col,
-                ))
+                // Redo insert = re-insert the text
+                self.insert_str_raw(change.range.start, &change.text);
+                // Compute end position after re-insertion
+                let end_pos = self.compute_end_after_insert(change.range.start, &change.text);
+                // Push to undo stack
+                self.undo_stack.push(BufferChange {
+                    kind: ChangeKind::Insert,
+                    range: BufferRange::new(change.range.start, end_pos),
+                    text: change.text.clone(),
+                    timestamp: Instant::now(),
+                });
+                if self.undo_stack.len() > 1000 {
+                    self.undo_stack.remove(0);
+                }
+                Some(end_pos)
             }
             ChangeKind::Delete => {
-                self.delete_range(change.range);
+                // Redo delete = delete the range again
+                // First capture current text at that range for undo
+                let current_text = self.get_text_in_range(change.range);
+                self.delete_range_raw(change.range);
+                // Push to undo stack
+                self.undo_stack.push(BufferChange {
+                    kind: ChangeKind::Delete,
+                    range: change.range,
+                    text: current_text,
+                    timestamp: Instant::now(),
+                });
+                if self.undo_stack.len() > 1000 {
+                    self.undo_stack.remove(0);
+                }
                 Some(change.range.start)
             }
-        }
+        };
+
+        // Re-enable tracking
+        self.tracking = true;
+
+        Some(change.range.start)
     }
 
+    #[allow(dead_code)]
     pub fn can_redo(&self) -> bool {
         !self.redo_stack.is_empty()
     }
@@ -645,15 +1014,54 @@ impl Buffer {
             return;
         }
         let dup = self.lines[line].clone();
+
+        if self.tracking {
+            // Undo of duplicate_line = delete the duplicate line
+            self.undo_stack.push(BufferChange {
+                kind: ChangeKind::Delete,
+                range: BufferRange::new(
+                    BufferPosition::new(line + 1, 0),
+                    BufferPosition::new(line + 2, 0),
+                ),
+                text: format!("{}\n", dup),
+                timestamp: Instant::now(),
+            });
+            if self.undo_stack.len() > 1000 {
+                self.undo_stack.remove(0);
+            }
+            self.redo_stack.clear();
+        }
+
         self.lines.insert(line + 1, dup);
         self.dirty = true;
-        self.redo_stack.clear();
     }
 
     pub fn move_line_up(&mut self, line: usize) -> Option<usize> {
         if line == 0 || line >= self.lines.len() {
             return None;
         }
+
+        // For undo: swap lines back
+        if self.tracking {
+            let line_content = self.lines[line].clone();
+            let prev_content = self.lines[line - 1].clone();
+            // Undo = swap them back (which is the same operation but in reverse)
+            // We'll record as a delete+insert of both lines
+            self.undo_stack.push(BufferChange {
+                kind: ChangeKind::Insert,
+                range: BufferRange::new(
+                    BufferPosition::new(line - 1, 0),
+                    BufferPosition::new(line + 1, 0),
+                ),
+                text: format!("{}\n{}\n", line_content, prev_content),
+                timestamp: Instant::now(),
+            });
+            if self.undo_stack.len() > 1000 {
+                self.undo_stack.remove(0);
+            }
+            self.redo_stack.clear();
+        }
+
         self.lines.swap(line, line - 1);
         self.dirty = true;
         Some(line - 1)
@@ -663,6 +1071,25 @@ impl Buffer {
         if line + 1 >= self.lines.len() {
             return None;
         }
+
+        if self.tracking {
+            let line_content = self.lines[line].clone();
+            let next_content = self.lines[line + 1].clone();
+            self.undo_stack.push(BufferChange {
+                kind: ChangeKind::Insert,
+                range: BufferRange::new(
+                    BufferPosition::new(line, 0),
+                    BufferPosition::new(line + 2, 0),
+                ),
+                text: format!("{}\n{}\n", line_content, next_content),
+                timestamp: Instant::now(),
+            });
+            if self.undo_stack.len() > 1000 {
+                self.undo_stack.remove(0);
+            }
+            self.redo_stack.clear();
+        }
+
         self.lines.swap(line, line + 1);
         self.dirty = true;
         Some(line + 1)
@@ -680,6 +1107,24 @@ impl Buffer {
             "css" => "/*",
             _ => "//",
         };
+
+        let old_content = self.lines[line].clone();
+
+        if self.tracking {
+            self.undo_stack.push(BufferChange {
+                kind: ChangeKind::Insert,
+                range: BufferRange::new(
+                    BufferPosition::new(line, 0),
+                    BufferPosition::new(line, self.lines[line].len()),
+                ),
+                text: old_content.clone(),
+                timestamp: Instant::now(),
+            });
+            if self.undo_stack.len() > 1000 {
+                self.undo_stack.remove(0);
+            }
+            self.redo_stack.clear();
+        }
 
         let line_content = self.lines[line].clone();
         let trimmed = line_content.trim_start();

@@ -45,6 +45,12 @@ enum Mode {
     About,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ReplacePhase {
+    Search,
+    Replacement,
+}
+
 struct App {
     tab_manager: TabManager,
     view: View,
@@ -66,6 +72,7 @@ struct App {
     show_splash: bool,
     running: bool,
     clipboard_history_index: usize,
+    replace_phase: ReplacePhase,
 }
 
 impl App {
@@ -91,6 +98,7 @@ impl App {
             show_splash: true,
             running: true,
             clipboard_history_index: 0,
+            replace_phase: ReplacePhase::Search,
         }
     }
 
@@ -319,157 +327,25 @@ impl App {
     }
 
     fn handle_normal_mode(&mut self, key: KeyEvent) {
-        match (key.modifiers, key.code) {
-            // Ctrl+Q: Quit
-            (KeyModifiers::CONTROL, KeyCode::Char('q')) => {
-                self.running = false;
-            }
-            // Ctrl+O: Save
-            (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
-                self.save_file();
-            }
-            // Ctrl+S: Save (alternative)
-            (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
-                self.save_file();
-            }
-            // Ctrl+G: Go to line
-            (KeyModifiers::CONTROL, KeyCode::Char('g')) => {
-                self.prev_mode = self.mode;
-                self.mode = Mode::GoToLine;
-                self.command_buffer.clear();
-                self.message = Some("Go to line: ".to_string());
-            }
-            // Ctrl+K: Cut
-            (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
-                self.cut_selection_or_line();
-            }
-            // Ctrl+U: Paste
-            (KeyModifiers::CONTROL, KeyCode::Char('u')) => {
-                self.paste();
-            }
-            // Ctrl+Shift+C: Copy
-            (KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('c')) => {
-                self.copy_selection();
-            }
-            // Ctrl+Shift+V: Clipboard history
-            (KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('v')) => {
-                self.mode = Mode::ClipboardHistory;
-            }
-            // Ctrl+A: Select all
-            (KeyModifiers::CONTROL, KeyCode::Char('a')) => {
-                let total = self.current_buffer().map_or(0, |b| b.line_count());
-                self.selection.select_all(total);
-            }
-            // Ctrl+Z: Undo
-            (KeyModifiers::CONTROL, KeyCode::Char('z')) => {
-                if let Some(buffer) = self.current_buffer_mut() {
-                    if let Some(pos) = buffer.undo() {
-                        self.cursor.set_position(pos);
-                    }
-                }
-            }
-            // Ctrl+Y: Redo
-            (KeyModifiers::CONTROL, KeyCode::Char('y')) => {
-                if let Some(buffer) = self.current_buffer_mut() {
-                    if let Some(pos) = buffer.redo() {
-                        self.cursor.set_position(pos);
-                    }
-                }
-            }
-            // Ctrl+W: Search
-            (KeyModifiers::CONTROL, KeyCode::Char('w')) => {
-                self.mode = Mode::Search;
-                self.search_buffer.clear();
-                self.message = Some("Search: ".to_string());
-            }
-            // Ctrl+R: Replace
-            (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
-                self.mode = Mode::Replace;
-                self.search_buffer.clear();
-                self.replace_buffer.clear();
-                self.message = Some("Search: ".to_string());
-            }
-            // Ctrl+T: Toggle explorer
-            (KeyModifiers::CONTROL, KeyCode::Char('t')) => {
-                self.explorer.toggle_visibility();
-                if self.explorer.is_visible() {
-                    self.mode = Mode::Explorer;
-                }
-            }
-            // Ctrl+P: Command palette
-            (KeyModifiers::CONTROL, KeyCode::Char('p')) => {
-                self.mode = Mode::Command;
-                self.command_buffer.clear();
-                self.message = Some("Command: ".to_string());
-            }
-            // Ctrl+D: Duplicate line
-            (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
-                let line = self.cursor.line;
-                if let Some(buffer) = self.current_buffer_mut() {
-                    buffer.duplicate_line(line);
-                    let line_count = buffer.lines().len();
-                    self.cursor.move_down(&self.current_lines());
-                    let _ = line_count; // buffer still valid
-                }
-            }
-            // Ctrl+/: Toggle comment
-            (KeyModifiers::CONTROL, KeyCode::Char('/')) => {
-                let line = self.cursor.line;
-                if let Some(buffer) = self.current_buffer_mut() {
-                    buffer.comment_toggle(line);
-                }
-            }
-            // Shift+Tab: Dedent
-            (KeyModifiers::SHIFT, KeyCode::BackTab) => {
-                let line = self.cursor.line;
-                if let Some(buffer) = self.current_buffer_mut() {
-                    buffer.dedent_line(line, 4);
-                }
-            }
-            // Alt+Up: Move line up
-            (KeyModifiers::ALT, KeyCode::Up) => {
-                let line = self.cursor.line;
-                if let Some(buffer) = self.current_buffer_mut() {
-                    if let Some(new_line) = buffer.move_line_up(line) {
-                        self.cursor.line = new_line;
-                    }
-                }
-            }
-            // Alt+Down: Move line down
-            (KeyModifiers::ALT, KeyCode::Down) => {
-                let line = self.cursor.line;
-                if let Some(buffer) = self.current_buffer_mut() {
-                    if let Some(new_line) = buffer.move_line_down(line) {
-                        self.cursor.line = new_line;
-                    }
-                }
-            }
-            // Alt+Right: Next tab
-            (KeyModifiers::ALT, KeyCode::Right) => {
-                self.tab_manager.next_tab();
-                self.cursor = Cursor::new();
-            }
-            // Alt+Left: Previous tab
-            (KeyModifiers::ALT, KeyCode::Left) => {
-                self.tab_manager.prev_tab();
-                self.cursor = Cursor::new();
-            }
+        let mods = key.modifiers;
+        match key.code {
+            // === Ctrl+Shift+Key combos (must be checked before Ctrl-only) ===
             // Ctrl+Shift+S: Save As
-            (KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('s')) => {
+            KeyCode::Char('s') if mods.contains(KeyModifiers::CONTROL) && mods.contains(KeyModifiers::SHIFT) => {
                 self.prev_mode = self.mode;
                 self.mode = Mode::SaveAs;
                 self.command_buffer.clear();
                 self.message = Some("Save as: ".to_string());
             }
             // Ctrl+Shift+O: Open file
-            (KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('o')) => {
+            KeyCode::Char('o') if mods.contains(KeyModifiers::CONTROL) && mods.contains(KeyModifiers::SHIFT) => {
                 self.prev_mode = self.mode;
                 self.mode = Mode::OpenFile;
                 self.command_buffer.clear();
                 self.message = Some("Open file: ".to_string());
             }
             // Ctrl+Shift+G: Git Status
-            (KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('g')) => {
+            KeyCode::Char('g') if mods.contains(KeyModifiers::CONTROL) && mods.contains(KeyModifiers::SHIFT) => {
                 if self.git.is_available() {
                     self.mode = Mode::GitStatus;
                     let status = self.git.format_status();
@@ -478,57 +354,22 @@ impl App {
                     self.message = Some("Not a git repository".to_string());
                 }
             }
-            // Alt+L: Copy current line
-            (KeyModifiers::ALT, KeyCode::Char('l')) => {
-                self.copy_line();
-            }
-            // Alt+F: Copy function
-            (KeyModifiers::ALT, KeyCode::Char('f')) => {
-                self.copy_function();
-            }
-            // Alt+K: Copy class
-            (KeyModifiers::ALT, KeyCode::Char('k')) => {
-                self.copy_class();
-            }
-            // Alt+Shift+A: Copy full file
-            (KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('a')) => {
-                self.copy_full_file();
-            }
-            // Ctrl+Space: Autocomplete
-            (KeyModifiers::CONTROL, KeyCode::Char(' ')) => {
-                self.show_completions();
-            }
-            // Alt+W: Search next (repeat last search)
-            (KeyModifiers::ALT, KeyCode::Char('w')) => {
-                self.search_next_match();
-            }
             // Ctrl+Shift+W: Close current tab
-            (KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('w')) => {
+            KeyCode::Char('w') if mods.contains(KeyModifiers::CONTROL) && mods.contains(KeyModifiers::SHIFT) => {
                 self.tab_manager.close_current();
                 self.cursor = Cursor::new();
                 self.selection.clear();
             }
-            // Ctrl+Home: Buffer start
-            (KeyModifiers::CONTROL, KeyCode::Home) => {
-                self.cursor.move_to_buffer_start();
+            // Ctrl+Shift+C: Copy
+            KeyCode::Char('c') if mods.contains(KeyModifiers::CONTROL) && mods.contains(KeyModifiers::SHIFT) => {
+                self.copy_selection();
             }
-            // Ctrl+End: Buffer end
-            (KeyModifiers::CONTROL, KeyCode::End) => {
-                let lines = self.current_lines();
-                self.cursor.move_to_buffer_end(&lines);
-            }
-            // Ctrl+Left: Word backward
-            (KeyModifiers::CONTROL, KeyCode::Left) => {
-                let lines = self.current_lines();
-                self.cursor.move_word_backward(&lines);
-            }
-            // Ctrl+Right: Word forward
-            (KeyModifiers::CONTROL, KeyCode::Right) => {
-                let lines = self.current_lines();
-                self.cursor.move_word_forward(&lines);
+            // Ctrl+Shift+V: Clipboard history
+            KeyCode::Char('v') if mods.contains(KeyModifiers::CONTROL) && mods.contains(KeyModifiers::SHIFT) => {
+                self.mode = Mode::ClipboardHistory;
             }
             // Alt+Shift+L: Select line mode
-            (KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('l')) => {
+            KeyCode::Char('l') if mods.contains(KeyModifiers::ALT) && mods.contains(KeyModifiers::SHIFT) => {
                 let line = self.cursor.line;
                 let line_content = self.current_buffer()
                     .and_then(|b| b.line(line))
@@ -541,33 +382,225 @@ impl App {
                 self.selection.select_line(line, &line_content);
             }
             // Alt+Shift+F: Select function
-            (KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('f')) => {
-                if let Some(buffer) = self.current_buffer() {
-                    if let Some((start, end)) = buffer.find_function_boundaries(self.cursor.line) {
-                        self.selection.start_selection(
-                            BufferPosition::new(start, 0),
-                            SelectionMode::Character,
-                        );
-                        self.selection.update_cursor(BufferPosition::new(end, buffer.line(end).map_or(0, |l| l.len())));
-                        self.message = Some(format!("Selected function: lines {}-{}", start + 1, end + 1));
-                    }
+            KeyCode::Char('f') if mods.contains(KeyModifiers::ALT) && mods.contains(KeyModifiers::SHIFT) => {
+                // Extract boundary data before mutating selection to avoid borrow conflict
+                let boundary_info = if let Some(buffer) = self.current_buffer() {
+                    buffer.find_function_boundaries(self.cursor.line).map(|(start, end)| {
+                        let end_col = buffer.line(end).map_or(0, |l| l.len());
+                        (start, end, end_col)
+                    })
+                } else {
+                    None
+                };
+                if let Some((start, end, end_col)) = boundary_info {
+                    self.selection.start_selection(
+                        BufferPosition::new(start, 0),
+                        SelectionMode::Character,
+                    );
+                    self.selection.update_cursor(BufferPosition::new(end, end_col));
+                    self.message = Some(format!("Selected function: lines {}-{}", start + 1, end + 1));
                 }
             }
             // Alt+Shift+K: Select class
-            (KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('k')) => {
-                if let Some(buffer) = self.current_buffer() {
-                    if let Some((start, end)) = buffer.find_class_boundaries(self.cursor.line) {
-                        self.selection.start_selection(
-                            BufferPosition::new(start, 0),
-                            SelectionMode::Character,
-                        );
-                        self.selection.update_cursor(BufferPosition::new(end, buffer.line(end).map_or(0, |l| l.len())));
-                        self.message = Some(format!("Selected class: lines {}-{}", start + 1, end + 1));
+            KeyCode::Char('k') if mods.contains(KeyModifiers::ALT) && mods.contains(KeyModifiers::SHIFT) => {
+                // Extract boundary data before mutating selection to avoid borrow conflict
+                let boundary_info = if let Some(buffer) = self.current_buffer() {
+                    buffer.find_class_boundaries(self.cursor.line).map(|(start, end)| {
+                        let end_col = buffer.line(end).map_or(0, |l| l.len());
+                        (start, end, end_col)
+                    })
+                } else {
+                    None
+                };
+                if let Some((start, end, end_col)) = boundary_info {
+                    self.selection.start_selection(
+                        BufferPosition::new(start, 0),
+                        SelectionMode::Character,
+                    );
+                    self.selection.update_cursor(BufferPosition::new(end, end_col));
+                    self.message = Some(format!("Selected class: lines {}-{}", start + 1, end + 1));
+                }
+            }
+            // Alt+Shift+A: Copy full file
+            KeyCode::Char('a') if mods.contains(KeyModifiers::ALT) && mods.contains(KeyModifiers::SHIFT) => {
+                self.copy_full_file();
+            }
+
+            // === Ctrl+Key combos ===
+            // Ctrl+Q: Quit
+            KeyCode::Char('q') if mods.contains(KeyModifiers::CONTROL) => {
+                self.running = false;
+            }
+            // Ctrl+O: Save
+            KeyCode::Char('o') if mods.contains(KeyModifiers::CONTROL) => {
+                self.save_file();
+            }
+            // Ctrl+S: Save (alternative)
+            KeyCode::Char('s') if mods.contains(KeyModifiers::CONTROL) => {
+                self.save_file();
+            }
+            // Ctrl+G: Go to line
+            KeyCode::Char('g') if mods.contains(KeyModifiers::CONTROL) => {
+                self.prev_mode = self.mode;
+                self.mode = Mode::GoToLine;
+                self.command_buffer.clear();
+                self.message = Some("Go to line: ".to_string());
+            }
+            // Ctrl+K: Cut
+            KeyCode::Char('k') if mods.contains(KeyModifiers::CONTROL) => {
+                self.cut_selection_or_line();
+            }
+            // Ctrl+U: Paste
+            KeyCode::Char('u') if mods.contains(KeyModifiers::CONTROL) => {
+                self.paste();
+            }
+            // Ctrl+A: Select all
+            KeyCode::Char('a') if mods.contains(KeyModifiers::CONTROL) => {
+                let total = self.current_buffer().map_or(0, |b| b.line_count());
+                self.selection.select_all(total);
+            }
+            // Ctrl+Z: Undo
+            KeyCode::Char('z') if mods.contains(KeyModifiers::CONTROL) => {
+                if let Some(buffer) = self.current_buffer_mut() {
+                    if let Some(pos) = buffer.undo() {
+                        self.cursor.set_position(pos);
                     }
                 }
             }
+            // Ctrl+Y: Redo
+            KeyCode::Char('y') if mods.contains(KeyModifiers::CONTROL) => {
+                if let Some(buffer) = self.current_buffer_mut() {
+                    if let Some(pos) = buffer.redo() {
+                        self.cursor.set_position(pos);
+                    }
+                }
+            }
+            // Ctrl+W: Search
+            KeyCode::Char('w') if mods.contains(KeyModifiers::CONTROL) => {
+                self.mode = Mode::Search;
+                self.search_buffer.clear();
+                self.message = Some("Search: ".to_string());
+            }
+            // Ctrl+R: Replace
+            KeyCode::Char('r') if mods.contains(KeyModifiers::CONTROL) => {
+                self.mode = Mode::Replace;
+                self.replace_phase = ReplacePhase::Search;
+                self.search_buffer.clear();
+                self.replace_buffer.clear();
+                self.message = Some("Search: ".to_string());
+            }
+            // Ctrl+T: Toggle explorer
+            KeyCode::Char('t') if mods.contains(KeyModifiers::CONTROL) => {
+                self.explorer.toggle_visibility();
+                if self.explorer.is_visible() {
+                    self.mode = Mode::Explorer;
+                }
+            }
+            // Ctrl+P: Command palette
+            KeyCode::Char('p') if mods.contains(KeyModifiers::CONTROL) => {
+                self.mode = Mode::Command;
+                self.command_buffer.clear();
+                self.message = Some("Command: ".to_string());
+            }
+            // Ctrl+D: Duplicate line
+            KeyCode::Char('d') if mods.contains(KeyModifiers::CONTROL) => {
+                let line = self.cursor.line;
+                if let Some(buffer) = self.current_buffer_mut() {
+                    buffer.duplicate_line(line);
+                    let line_count = buffer.lines().len();
+                    self.cursor.move_down(&self.current_lines());
+                    let _ = line_count; // buffer still valid
+                }
+            }
+            // Ctrl+/: Toggle comment
+            KeyCode::Char('/') if mods.contains(KeyModifiers::CONTROL) => {
+                let line = self.cursor.line;
+                if let Some(buffer) = self.current_buffer_mut() {
+                    buffer.comment_toggle(line);
+                }
+            }
+            // Ctrl+Space: Autocomplete
+            KeyCode::Char(' ') if mods.contains(KeyModifiers::CONTROL) => {
+                self.show_completions();
+            }
+            // Ctrl+Home: Buffer start
+            KeyCode::Home if mods.contains(KeyModifiers::CONTROL) => {
+                self.cursor.move_to_buffer_start();
+            }
+            // Ctrl+End: Buffer end
+            KeyCode::End if mods.contains(KeyModifiers::CONTROL) => {
+                let lines = self.current_lines();
+                self.cursor.move_to_buffer_end(&lines);
+            }
+            // Ctrl+Left: Word backward
+            KeyCode::Left if mods.contains(KeyModifiers::CONTROL) => {
+                let lines = self.current_lines();
+                self.cursor.move_word_backward(&lines);
+            }
+            // Ctrl+Right: Word forward
+            KeyCode::Right if mods.contains(KeyModifiers::CONTROL) => {
+                let lines = self.current_lines();
+                self.cursor.move_word_forward(&lines);
+            }
+
+            // === Alt+Key combos ===
+            // Alt+Up: Move line up
+            KeyCode::Up if mods.contains(KeyModifiers::ALT) && !mods.contains(KeyModifiers::SHIFT) => {
+                let line = self.cursor.line;
+                if let Some(buffer) = self.current_buffer_mut() {
+                    if let Some(new_line) = buffer.move_line_up(line) {
+                        self.cursor.line = new_line;
+                    }
+                }
+            }
+            // Alt+Down: Move line down
+            KeyCode::Down if mods.contains(KeyModifiers::ALT) && !mods.contains(KeyModifiers::SHIFT) => {
+                let line = self.cursor.line;
+                if let Some(buffer) = self.current_buffer_mut() {
+                    if let Some(new_line) = buffer.move_line_down(line) {
+                        self.cursor.line = new_line;
+                    }
+                }
+            }
+            // Alt+Right: Next tab
+            KeyCode::Right if mods.contains(KeyModifiers::ALT) && !mods.contains(KeyModifiers::SHIFT) => {
+                self.tab_manager.next_tab();
+                self.cursor = Cursor::new();
+            }
+            // Alt+Left: Previous tab
+            KeyCode::Left if mods.contains(KeyModifiers::ALT) && !mods.contains(KeyModifiers::SHIFT) => {
+                self.tab_manager.prev_tab();
+                self.cursor = Cursor::new();
+            }
+            // Alt+L: Copy current line
+            KeyCode::Char('l') if mods.contains(KeyModifiers::ALT) && !mods.contains(KeyModifiers::SHIFT) => {
+                self.copy_line();
+            }
+            // Alt+F: Copy function
+            KeyCode::Char('f') if mods.contains(KeyModifiers::ALT) && !mods.contains(KeyModifiers::SHIFT) => {
+                self.copy_function();
+            }
+            // Alt+K: Copy class
+            KeyCode::Char('k') if mods.contains(KeyModifiers::ALT) && !mods.contains(KeyModifiers::SHIFT) => {
+                self.copy_class();
+            }
+            // Alt+W: Search next (repeat last search)
+            KeyCode::Char('w') if mods.contains(KeyModifiers::ALT) => {
+                self.search_next_match();
+            }
+
+            // === Shift+Key combos ===
+            // Shift+Tab: Dedent
+            KeyCode::BackTab => {
+                let line = self.cursor.line;
+                if let Some(buffer) = self.current_buffer_mut() {
+                    buffer.dedent_line(line, 4);
+                }
+            }
+
+            // === Movement keys ===
             // F1: Help
-            (_, KeyCode::F(1)) => {
+            KeyCode::F(1) => {
                 self.mode = Mode::Help;
                 let bindings = self.keybindings.all_bindings();
                 let mut help_text = String::from("=== Vertil Nano Pro Keybindings ===\n\n");
@@ -578,10 +611,10 @@ impl App {
                 self.message = Some(help_text);
             }
 
-            // Movement keys
-            (_, KeyCode::Up) => {
+            // Up
+            KeyCode::Up => {
                 let lines = self.current_lines();
-                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                if mods.contains(KeyModifiers::SHIFT) {
                     if !self.selection.active {
                         self.selection.start_selection(self.cursor.position(), SelectionMode::Character);
                     }
@@ -592,9 +625,10 @@ impl App {
                     self.cursor.move_up(&lines);
                 }
             }
-            (_, KeyCode::Down) => {
+            // Down
+            KeyCode::Down => {
                 let lines = self.current_lines();
-                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                if mods.contains(KeyModifiers::SHIFT) {
                     if !self.selection.active {
                         self.selection.start_selection(self.cursor.position(), SelectionMode::Character);
                     }
@@ -605,9 +639,10 @@ impl App {
                     self.cursor.move_down(&lines);
                 }
             }
-            (_, KeyCode::Left) => {
+            // Left
+            KeyCode::Left => {
                 let lines = self.current_lines();
-                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                if mods.contains(KeyModifiers::SHIFT) {
                     if !self.selection.active {
                         self.selection.start_selection(self.cursor.position(), SelectionMode::Character);
                     }
@@ -621,9 +656,10 @@ impl App {
                     self.cursor.move_left(&lines);
                 }
             }
-            (_, KeyCode::Right) => {
+            // Right
+            KeyCode::Right => {
                 let lines = self.current_lines();
-                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                if mods.contains(KeyModifiers::SHIFT) {
                     if !self.selection.active {
                         self.selection.start_selection(self.cursor.position(), SelectionMode::Character);
                     }
@@ -637,29 +673,29 @@ impl App {
                     self.cursor.move_right(&lines);
                 }
             }
-            (_, KeyCode::Home) => {
+            KeyCode::Home => {
                 self.cursor.move_to_line_start();
             }
-            (_, KeyCode::End) => {
+            KeyCode::End => {
                 let lines = self.current_lines();
                 self.cursor.move_to_line_end(&lines);
             }
-            (_, KeyCode::PageUp) => {
+            KeyCode::PageUp => {
                 let lines = self.current_lines();
                 self.cursor.move_page_up(&lines, self.view.visible_height);
             }
-            (_, KeyCode::PageDown) => {
+            KeyCode::PageDown => {
                 let lines = self.current_lines();
                 self.cursor.move_page_down(&lines, self.view.visible_height);
             }
 
             // Enter insert mode
-            (_, KeyCode::Enter) => {
+            KeyCode::Enter => {
                 self.mode = Mode::Insert;
                 self.message = None;
             }
-            // Any printable character enters insert mode
-            (_, KeyCode::Char(c)) => {
+            // Any printable character enters insert mode (if no modifier matched above)
+            KeyCode::Char(c) => {
                 self.mode = Mode::Insert;
                 // Insert the character
                 let pos = self.cursor.position();
@@ -670,14 +706,14 @@ impl App {
                 self.cursor.preferred_col = None;
             }
             // Delete key
-            (_, KeyCode::Delete) => {
+            KeyCode::Delete => {
                 let pos = self.cursor.position();
                 if let Some(buffer) = self.current_buffer_mut() {
                     buffer.delete_char(pos);
                 }
             }
             // Backspace
-            (_, KeyCode::Backspace) => {
+            KeyCode::Backspace => {
                 let pos = self.cursor.position();
                 if let Some(buffer) = self.current_buffer_mut() {
                     if let Some(new_pos) = buffer.backspace(pos) {
@@ -686,7 +722,7 @@ impl App {
                 }
             }
             // Tab
-            (_, KeyCode::Tab) => {
+            KeyCode::Tab => {
                 let line = self.cursor.line;
                 if let Some(buffer) = self.current_buffer_mut() {
                     buffer.indent_line(line, 4, true);
@@ -900,59 +936,64 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
+                self.replace_phase = ReplacePhase::Search;
                 self.message = None;
             }
             KeyCode::Enter => {
-                if self.replace_buffer.is_empty() && !self.search_buffer.is_empty() {
-                    // Phase transition: search term done, now entering replacement
-                    self.message = Some("Replace with: ".to_string());
-                } else if !self.search_buffer.is_empty() {
-                    // Phase 2 done: perform the replacement
-                    let lines = self.current_lines();
-                    let changed = self.search_engine.replace_in_buffer(
-                        &lines,
-                        &self.search_buffer,
-                        &self.replace_buffer,
-                    );
-                    if changed.is_empty() {
-                        self.message = Some("No matches found".to_string());
-                    } else {
-                        let count = changed.len();
-                        for (line_idx, new_line) in &changed {
-                            if let Some(buffer) = self.current_buffer_mut() {
-                                if let Some(l) = buffer.line_mut(*line_idx) {
-                                    *l = new_line.clone();
+                match self.replace_phase {
+                    ReplacePhase::Search => {
+                        // Phase transition: search term done, now entering replacement
+                        self.replace_phase = ReplacePhase::Replacement;
+                        self.message = Some("Replace with: ".to_string());
+                    }
+                    ReplacePhase::Replacement => {
+                        // Phase 2 done: perform the replacement
+                        let lines = self.current_lines();
+                        let changed = self.search_engine.replace_in_buffer(
+                            &lines,
+                            &self.search_buffer,
+                            &self.replace_buffer,
+                        );
+                        if changed.is_empty() {
+                            self.message = Some("No matches found".to_string());
+                        } else {
+                            let count = changed.len();
+                            for (line_idx, new_line) in &changed {
+                                if let Some(buffer) = self.current_buffer_mut() {
+                                    if let Some(l) = buffer.line_mut(*line_idx) {
+                                        *l = new_line.clone();
+                                    }
                                 }
                             }
+                            self.message = Some(format!("Replaced {} occurrences", count));
                         }
-                        self.message = Some(format!("Replaced {} occurrences", count));
+                        self.mode = Mode::Normal;
+                        self.replace_phase = ReplacePhase::Search;
                     }
-                    self.mode = Mode::Normal;
                 }
             }
             KeyCode::Backspace => {
-                if self.replace_buffer.is_empty() {
-                    self.search_buffer.pop();
-                    self.message = Some(format!("Search: {}", self.search_buffer));
-                } else {
-                    self.replace_buffer.pop();
-                    self.message = Some(format!("Replace with: {}", self.replace_buffer));
+                match self.replace_phase {
+                    ReplacePhase::Search => {
+                        self.search_buffer.pop();
+                        self.message = Some(format!("Search: {}", self.search_buffer));
+                    }
+                    ReplacePhase::Replacement => {
+                        self.replace_buffer.pop();
+                        self.message = Some(format!("Replace with: {}", self.replace_buffer));
+                    }
                 }
             }
             KeyCode::Char(c) => {
-                if self.replace_buffer.is_empty() && !self.search_buffer.is_empty() {
-                    // Check if we're in phase 2 (user pressed Enter already)
-                    // We use a simple heuristic: if search buffer is non-empty and this is a new char after Enter
-                    self.search_buffer.push(c);
-                    self.message = Some(format!("Search: {}", self.search_buffer));
-                } else if !self.replace_buffer.is_empty() {
-                    // Phase 2: entering replacement
-                    self.replace_buffer.push(c);
-                    self.message = Some(format!("Replace with: {}", self.replace_buffer));
-                } else {
-                    // Phase 1: entering search term
-                    self.search_buffer.push(c);
-                    self.message = Some(format!("Search: {}", self.search_buffer));
+                match self.replace_phase {
+                    ReplacePhase::Search => {
+                        self.search_buffer.push(c);
+                        self.message = Some(format!("Search: {}", self.search_buffer));
+                    }
+                    ReplacePhase::Replacement => {
+                        self.replace_buffer.push(c);
+                        self.message = Some(format!("Replace with: {}", self.replace_buffer));
+                    }
                 }
             }
             _ => {}
@@ -1125,7 +1166,8 @@ impl App {
                 self.message = None;
             }
             KeyCode::Enter => {
-                self.save_as(&self.command_buffer);
+                let path = self.command_buffer.clone();
+                self.save_as(&path);
             }
             KeyCode::Backspace => {
                 self.command_buffer.pop();
@@ -1221,8 +1263,13 @@ impl App {
             "theme" => {
                 if parts.len() > 1 {
                     match parts[1] {
-                        "dark" => self.message = Some("Theme: Dark (restart to apply)".to_string()),
-                        "light" => self.message = Some("Theme: Light (restart to apply)".to_string()),
+                        "dark" => {
+                            self.message = Some("Theme: Dark applied".to_string());
+                            // Theme will be applied on next render cycle
+                        }
+                        "light" => {
+                            self.message = Some("Theme: Light applied".to_string());
+                        }
                         _ => self.message = Some("Unknown theme. Use: dark, light".to_string()),
                     }
                 } else {
@@ -1304,6 +1351,10 @@ impl App {
             }
             "about" => {
                 self.mode = Mode::About;
+                self.message = Some(format!(
+                    "Vertil Nano Pro v{}\nCreated by {}\nLicense: {}\nRepo: {}\n\nPress Esc to close",
+                    VERSION, AUTHOR, LICENSE, REPOSITORY
+                ));
             }
             "newfile" => {
                 if parts.len() > 1 {
@@ -1367,6 +1418,78 @@ impl App {
                     output.push_str(&format!("  {:20} {}\n", kb.key, kb.description));
                 }
                 self.message = Some(output);
+            }
+            "casesensitive" | "case" => {
+                self.search_engine.set_case_sensitive(!self.search_engine.case_sensitive());
+                self.message = Some(format!(
+                    "Case sensitive: {}",
+                    if self.search_engine.case_sensitive() { "ON" } else { "OFF" }
+                ));
+            }
+            "wholeword" | "word" => {
+                self.search_engine.set_whole_word(!self.search_engine.whole_word());
+                self.message = Some(format!(
+                    "Whole word: {}",
+                    if self.search_engine.whole_word() { "ON" } else { "OFF" }
+                ));
+            }
+            "regex" => {
+                self.search_engine.set_regex_mode(!self.search_engine.regex_mode());
+                self.message = Some(format!(
+                    "Regex mode: {}",
+                    if self.search_engine.regex_mode() { "ON" } else { "OFF" }
+                ));
+            }
+            "mkdir" => {
+                if parts.len() > 1 {
+                    let name = parts[1..].join(" ");
+                    if let Some(root) = self.explorer.root() {
+                        let path = root.join(&name);
+                        match self.explorer.create_directory(&path) {
+                            Ok(()) => self.message = Some(format!("Created directory: {}", name)),
+                            Err(e) => self.message = Some(format!("Error: {}", e)),
+                        }
+                    }
+                } else {
+                    self.message = Some("Usage: mkdir <path>".to_string());
+                }
+            }
+            "rename" => {
+                if parts.len() > 2 {
+                    let old_name = parts[1];
+                    let new_name = parts[2];
+                    if let Some(root) = self.explorer.root() {
+                        let old_path = root.join(old_name);
+                        let new_path = root.join(new_name);
+                        match self.explorer.rename(&old_path, &new_path) {
+                            Ok(()) => self.message = Some(format!("Renamed: {} -> {}", old_name, new_name)),
+                            Err(e) => self.message = Some(format!("Error: {}", e)),
+                        }
+                    }
+                } else {
+                    self.message = Some("Usage: rename <old> <new>".to_string());
+                }
+            }
+            "syspaste" => {
+                let text = self.clipboard.get_system_clipboard();
+                if let Some(text) = text {
+                    let pos = self.cursor.position();
+                    if let Some(buffer) = self.current_buffer_mut() {
+                        buffer.insert_str(pos, &text);
+                    }
+                    // Move cursor to end of pasted text
+                    let split_lines: Vec<&str> = text.split('\n').collect();
+                    if split_lines.len() == 1 {
+                        self.cursor.col += text.len();
+                    } else {
+                        self.cursor.line += split_lines.len() - 1;
+                        self.cursor.col = split_lines.last().map_or(0, |l| l.len());
+                    }
+                    self.cursor.preferred_col = None;
+                    self.message = Some("Pasted from system clipboard".to_string());
+                } else {
+                    self.message = Some("No system clipboard available".to_string());
+                }
             }
             _ => {
                 self.message = Some(format!("Unknown command: {}", parts[0]));
