@@ -132,9 +132,9 @@ impl GitIntegration {
                 let old_path = delta.old_file().path().and_then(|p| p.to_str()).unwrap_or("");
                 new_path == file_path || old_path == file_path
             },
-            &mut |_, _| true,
-            &mut |_, _| true,
-            &mut |_, _, line| {
+            Some(&mut |_, _| true),
+            Some(&mut |_, _| true),
+            Some(&mut |_, _, line: git2::DiffLine<'_>| {
                 let kind = match line.origin() {
                     '+' => DiffLineKind::Addition,
                     '-' => DiffLineKind::Deletion,
@@ -150,7 +150,7 @@ impl GitIntegration {
                     kind,
                 });
                 true
-            },
+            }),
         )
         .map_err(|e| format!("Failed to iterate diff: {}", e.message()))?;
 
