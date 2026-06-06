@@ -144,8 +144,8 @@ impl GitIntegration {
                 let content = String::from_utf8_lossy(line.content()).to_string();
 
                 diff_lines.push(DiffLine {
-                    old_line: line.old_lineno(),
-                    new_line: line.new_lineno(),
+                    old_line: line.old_lineno().map(|n| n as usize),
+                    new_line: line.new_lineno().map(|n| n as usize),
                     content,
                     kind,
                 });
