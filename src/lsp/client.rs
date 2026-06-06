@@ -213,7 +213,7 @@ impl LspClient {
     }
 
     pub fn get_diagnostics(&self, path: &PathBuf) -> &[Diagnostic] {
-        self.diagnostics.get(path).unwrap_or(&[])
+        self.diagnostics.get(path).map_or(&[], |v| v)
     }
 
     pub fn clear_diagnostics(&mut self, path: &PathBuf) {

@@ -45,7 +45,7 @@ impl ProjectExplorer {
         }
 
         self.entries.clear();
-        let root = self.root.as_ref().unwrap();
+        let root = self.root.clone().unwrap();
 
         if let Some(name) = root.file_name().and_then(|n| n.to_str()) {
             self.entries.push(ProjectEntry {
@@ -57,7 +57,7 @@ impl ProjectExplorer {
             });
         }
 
-        self.load_directory(root, 1);
+        self.load_directory(&root, 1);
     }
 
     fn load_directory(&mut self, dir: &Path, depth: usize) {
@@ -105,19 +105,19 @@ impl ProjectExplorer {
     }
 
     pub fn toggle_expand(&mut self, index: usize) -> Option<PathBuf> {
-        let entry = self.entries.get(index)?;
+        let entry = self.entries.get(index)?.clone();
 
         if !entry.is_dir {
             return Some(entry.path.clone());
         }
 
         let was_expanded = entry.expanded;
+        let dir_path = entry.path.clone();
+        let dir_depth = entry.depth;
         self.entries[index].expanded = !was_expanded;
 
         if was_expanded {
             // Collapse: remove child entries
-            let dir_path = entry.path.clone();
-            let dir_depth = entry.depth;
             let mut remove_indices = Vec::new();
 
             for (i, e) in self.entries.iter().enumerate() {
@@ -138,8 +138,7 @@ impl ProjectExplorer {
             }
         } else {
             // Expand: insert child entries
-            let dir_path = entry.path.clone();
-            let child_depth = entry.depth + 1;
+            let child_depth = dir_depth + 1;
 
             let mut new_entries = Vec::new();
             if let Ok(rd) = fs::read_dir(&dir_path) {

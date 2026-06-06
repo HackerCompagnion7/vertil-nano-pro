@@ -42,7 +42,7 @@ impl HighlightEngine {
             return self.fallback_highlight(line);
         }
 
-        if parser.set_language(language_obj.unwrap()).is_err() {
+        if parser.set_language(&language_obj.unwrap()).is_err() {
             return self.fallback_highlight(line);
         }
 
@@ -120,8 +120,7 @@ impl HighlightEngine {
             "package" | "go" | "chan" | "select" | "range" | "defer" | "fallthrough" | "map" |
 
             // Rust keywords
-            "fn" | "pub" | "use" | "mod" | "crate" | "self" | "Self" | "super" |
-            "struct" | "enum" | "impl" | "trait" | "where" | "unsafe" | "extern" |
+            "fn" | "pub" | "use" | "mod" | "crate" | "self" | "Self" |
             "mut" | "ref" | "move" | "dyn" | "match" | "loop" | "macro_rules" |
 
             // C/C++ keywords
@@ -145,12 +144,12 @@ impl HighlightEngine {
             "decorator" | "call" | "call_expression" | "function_call" => 4,
 
             // Types
-            "type_identifier" | "struct" | "enum" | "class_definition" |
+            "type_identifier" | "class_definition" |
             "class_declaration" | "interface_declaration" | "struct_item" | "enum_item" |
             "primitive_type" | "built_in_type" => 5,
 
             // Numbers
-            "integer" | "float" | "number" | "integer_literal" | "float_literal" |
+            "integer" | "number" | "integer_literal" | "float_literal" |
             "number_literal" | "hex_integer_literal" | "octal_integer_literal" |
             "binary_integer_literal" => 6,
 

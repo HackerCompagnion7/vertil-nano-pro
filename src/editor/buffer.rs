@@ -426,8 +426,8 @@ impl Buffer {
     }
 
     pub fn save(&mut self) -> Result<(), String> {
-        if let Some(path) = &self.path {
-            self.save_to(path)
+        if let Some(path) = self.path.clone() {
+            self.save_to(&path)
         } else {
             Err("No file path set. Use save_as.".to_string())
         }

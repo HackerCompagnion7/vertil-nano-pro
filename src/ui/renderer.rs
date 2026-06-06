@@ -10,7 +10,6 @@ use std::io::{self, Write};
 use crate::editor::{BufferPosition, Cursor, Selection, TabManager, View};
 use crate::syntax::highlight::{HighlightEngine, HighlightSpan};
 use crate::config::settings::Settings;
-use crate::config::ColorDef;
 
 pub struct Renderer<'a> {
     stdout: io::Stdout,
@@ -413,7 +412,7 @@ impl<'a> Renderer<'a> {
         Ok(())
     }
 
-    fn render_empty(&mut self) -> io::Result<()> {
+    pub fn render_empty(&mut self) -> io::Result<()> {
         queue!(self.stdout, Clear(ClearType::All))?;
         queue!(self.stdout, MoveTo(0, 0))?;
         queue!(self.stdout, SetForegroundColor(Color::Cyan), Print("  Vertil Nano Pro"))?;

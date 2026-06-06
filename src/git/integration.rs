@@ -99,7 +99,7 @@ impl GitIntegration {
                 GitFileStatus::TypeChange
             } else if status.is_ignored() {
                 GitFileStatus::Ignored
-            } else if status.is_wt_untracked() || status.is_index_new() {
+            } else if status.is_wt_new() || status.is_index_new() {
                 GitFileStatus::Untracked
             } else {
                 GitFileStatus::Modified
@@ -134,35 +134,36 @@ impl GitIntegration {
             }
 
             // Get the patches for this delta
-            let patch = git2::Patch::from_diff(&diff, delta.nfiles()).unwrap_or_else(|| {
-                // Create an empty patch
-                git2::Patch::from_diff(&diff, 0).unwrap()
-            });
+            let patch_result = git2::Patch::from_diff(&diff, delta.nfiles() as usize);
+            let patch = match patch_result {
+                Ok(Some(p)) => p,
+                Ok(None) => continue,
+                Err(_) => continue,
+            };
 
-            if let Some(patch) = patch {
-                for hunk_idx in 0..patch.num_hunks() {
-                    let hunk = patch.hunk(hunk_idx)
-                        .map_err(|e| format!("Failed to get hunk: {}", e.message()))?;
+            for hunk_idx in 0..patch.num_hunks() {
+                let hunk = patch.hunk(hunk_idx)
+                    .map_err(|e| format!("Failed to get hunk: {}", e.message()))?;
+                let num_lines = hunk.num_lines();
 
-                    for line_idx in 0..hunk.num_lines() {
-                        let line = patch.line(hunk_idx, line_idx)
-                            .map_err(|e| format!("Failed to get line: {}", e.message()))?;
+                for line_idx in 0..num_lines {
+                    let line = patch.line(hunk_idx, line_idx)
+                        .map_err(|e| format!("Failed to get line: {}", e.message()))?;
 
-                        let kind = match line.origin() {
-                            '+' => DiffLineKind::Addition,
-                            '-' => DiffLineKind::Deletion,
-                            _ => DiffLineKind::Context,
-                        };
+                    let kind = match line.origin() {
+                        '+' => DiffLineKind::Addition,
+                        '-' => DiffLineKind::Deletion,
+                        _ => DiffLineKind::Context,
+                    };
 
-                        let content = String::from_utf8_lossy(line.content()).to_string();
+                    let content = String::from_utf8_lossy(line.content()).to_string();
 
-                        diff_lines.push(DiffLine {
-                            old_line: line.old_lineno(),
-                            new_line: line.new_lineno(),
-                            content,
-                            kind,
-                        });
-                    }
+                    diff_lines.push(DiffLine {
+                        old_line: line.old_lineno(),
+                        new_line: line.new_lineno(),
+                        content,
+                        kind,
+                    });
                 }
             }
         }

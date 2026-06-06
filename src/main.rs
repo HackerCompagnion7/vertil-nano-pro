@@ -68,7 +68,7 @@ struct App {
 }
 
 impl App {
-    fn new(settings: &Settings) -> Self {
+    fn new(_settings: &Settings) -> Self {
         Self {
             tab_manager: TabManager::new(),
             view: View::new(80, 24),
@@ -108,7 +108,7 @@ impl App {
         }
 
         // Initialize git
-        if self.git.is_available() == false {
+        if !self.git.is_available() {
             if let Some(root) = self.explorer.root() {
                 let _ = self.git.open(root);
             }
@@ -167,20 +167,27 @@ impl App {
             let text = self.selection.get_selected_text(&lines);
             self.clipboard.copy(&text, ClipKind::Block);
 
+            let start = self.selection.start();
+            let end = self.selection.end();
             if let Some(buffer) = self.current_buffer_mut() {
-                let start = self.selection.start();
-                let end = self.selection.end();
-                buffer.delete_range(editor::BufferRange::new(start, end));
+                buffer.delete_range(BufferRange::new(start, end));
             }
-            self.cursor.set_position(self.selection.start());
+            self.cursor.set_position(start);
             self.selection.clear();
-        } else if let Some(buffer) = self.current_buffer_mut() {
+        } else {
+            // Cut current line
             let line = self.cursor.line;
-            let line_text = buffer.line(line).unwrap_or("").to_string();
+            let line_text = if let Some(buffer) = self.current_buffer() {
+                buffer.line(line).unwrap_or("").to_string()
+            } else {
+                return;
+            };
             self.clipboard.copy_line(&line_text);
-            buffer.delete_line(line);
-            if line >= buffer.line_count() {
-                self.cursor.line = buffer.line_count().saturating_sub(1);
+            if let Some(buffer) = self.current_buffer_mut() {
+                buffer.delete_line(line);
+                if line >= buffer.line_count() {
+                    self.cursor.line = buffer.line_count().saturating_sub(1);
+                }
             }
         }
     }
@@ -237,19 +244,19 @@ impl App {
     fn paste(&mut self) {
         if let Some(text) = self.clipboard.paste_latest() {
             let text = text.to_string();
+            let pos = self.cursor.position();
             if let Some(buffer) = self.current_buffer_mut() {
-                let pos = self.cursor.position();
                 buffer.insert_str(pos, &text);
-                // Move cursor to end of pasted text
-                let lines: Vec<&str> = text.split('\n').collect();
-                if lines.len() == 1 {
-                    self.cursor.col += text.len();
-                } else {
-                    self.cursor.line += lines.len() - 1;
-                    self.cursor.col = lines.last().map_or(0, |l| l.len());
-                }
-                self.cursor.preferred_col = None;
             }
+            // Move cursor to end of pasted text
+            let split_lines: Vec<&str> = text.split('\n').collect();
+            if split_lines.len() == 1 {
+                self.cursor.col += text.len();
+            } else {
+                self.cursor.line += split_lines.len() - 1;
+                self.cursor.col = split_lines.last().map_or(0, |l| l.len());
+            }
+            self.cursor.preferred_col = None;
         }
     }
 
@@ -339,35 +346,42 @@ impl App {
             }
             // Ctrl+D: Duplicate line
             (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
+                let line = self.cursor.line;
                 if let Some(buffer) = self.current_buffer_mut() {
-                    buffer.duplicate_line(self.cursor.line);
-                    self.cursor.move_down(buffer.lines());
+                    buffer.duplicate_line(line);
+                    let line_count = buffer.lines().len();
+                    self.cursor.move_down(&self.current_lines());
+                    let _ = line_count; // buffer still valid
                 }
             }
             // Ctrl+/: Toggle comment
             (KeyModifiers::CONTROL, KeyCode::Char('/')) => {
+                let line = self.cursor.line;
                 if let Some(buffer) = self.current_buffer_mut() {
-                    buffer.comment_toggle(self.cursor.line);
+                    buffer.comment_toggle(line);
                 }
             }
             // Shift+Tab: Dedent
             (KeyModifiers::SHIFT, KeyCode::BackTab) => {
+                let line = self.cursor.line;
                 if let Some(buffer) = self.current_buffer_mut() {
-                    buffer.dedent_line(self.cursor.line, 4);
+                    buffer.dedent_line(line, 4);
                 }
             }
             // Alt+Up: Move line up
             (KeyModifiers::ALT, KeyCode::Up) => {
+                let line = self.cursor.line;
                 if let Some(buffer) = self.current_buffer_mut() {
-                    if let Some(new_line) = buffer.move_line_up(self.cursor.line) {
+                    if let Some(new_line) = buffer.move_line_up(line) {
                         self.cursor.line = new_line;
                     }
                 }
             }
             // Alt+Down: Move line down
             (KeyModifiers::ALT, KeyCode::Down) => {
+                let line = self.cursor.line;
                 if let Some(buffer) = self.current_buffer_mut() {
-                    if let Some(new_line) = buffer.move_line_down(self.cursor.line) {
+                    if let Some(new_line) = buffer.move_line_down(line) {
                         self.cursor.line = new_line;
                     }
                 }
@@ -471,33 +485,36 @@ impl App {
             (_, KeyCode::Char(c)) => {
                 self.mode = Mode::Insert;
                 // Insert the character
+                let pos = self.cursor.position();
                 if let Some(buffer) = self.current_buffer_mut() {
-                    let pos = self.cursor.position();
                     buffer.insert_char(pos, c);
-                    self.cursor.col += 1;
-                    self.cursor.preferred_col = None;
                 }
+                self.cursor.col += 1;
+                self.cursor.preferred_col = None;
             }
             // Delete key
             (_, KeyCode::Delete) => {
+                let pos = self.cursor.position();
                 if let Some(buffer) = self.current_buffer_mut() {
-                    buffer.delete_char(self.cursor.position());
+                    buffer.delete_char(pos);
                 }
             }
             // Backspace
             (_, KeyCode::Backspace) => {
+                let pos = self.cursor.position();
                 if let Some(buffer) = self.current_buffer_mut() {
-                    if let Some(new_pos) = buffer.backspace(self.cursor.position()) {
+                    if let Some(new_pos) = buffer.backspace(pos) {
                         self.cursor.set_position(new_pos);
                     }
                 }
             }
             // Tab
             (_, KeyCode::Tab) => {
+                let line = self.cursor.line;
                 if let Some(buffer) = self.current_buffer_mut() {
-                    buffer.indent_line(self.cursor.line, 4, true);
-                    self.cursor.col += 4;
+                    buffer.indent_line(line, 4, true);
                 }
+                self.cursor.col += 4;
             }
             _ => {}
         }
@@ -528,68 +545,81 @@ impl App {
             }
             // Enter: new line
             (_, KeyCode::Enter) => {
-                if let Some(buffer) = self.current_buffer_mut() {
-                    let new_pos = buffer.insert_newline(self.cursor.position());
-                    self.cursor.set_position(new_pos);
+                let pos = self.cursor.position();
+                let new_pos = if let Some(buffer) = self.current_buffer_mut() {
+                    buffer.insert_newline(pos)
+                } else {
+                    return;
+                };
+                self.cursor.set_position(new_pos);
 
-                    // Auto-indent
-                    if self.should_auto_indent() {
-                        let prev_line = buffer.line(self.cursor.line.saturating_sub(1)).unwrap_or("").to_string();
-                        let indent: String = prev_line.chars().take_while(|c| *c == ' ' || *c == '\t').collect();
+                // Auto-indent
+                if self.should_auto_indent() {
+                    let prev_line_idx = self.cursor.line.saturating_sub(1);
+                    let prev_line = self.current_buffer()
+                        .and_then(|b| b.line(prev_line_idx))
+                        .unwrap_or("")
+                        .to_string();
+                    let indent: String = prev_line.chars().take_while(|c| *c == ' ' || *c == '\t').collect();
 
-                        // Extra indent after {
-                        let extra = if prev_line.trim_end().ends_with('{')
-                            || prev_line.trim_end().ends_with(':')
-                            || prev_line.trim_end().ends_with('(')
-                        {
-                            "    "
-                        } else {
-                            ""
-                        };
+                    // Extra indent after {
+                    let extra = if prev_line.trim_end().ends_with('{')
+                        || prev_line.trim_end().ends_with(':')
+                        || prev_line.trim_end().ends_with('(')
+                    {
+                        "    "
+                    } else {
+                        ""
+                    };
 
-                        let full_indent = format!("{}{}", indent, extra);
-                        if !full_indent.is_empty() {
-                            buffer.insert_str(
-                                BufferPosition::new(self.cursor.line, 0),
-                                &full_indent,
-                            );
-                            self.cursor.col = full_indent.len();
+                    let full_indent = format!("{}{}", indent, extra);
+                    if !full_indent.is_empty() {
+                        let insert_pos = BufferPosition::new(self.cursor.line, 0);
+                        if let Some(buffer) = self.current_buffer_mut() {
+                            buffer.insert_str(insert_pos, &full_indent);
                         }
+                        self.cursor.col = full_indent.len();
                     }
                 }
             }
             // Tab
             (_, KeyCode::Tab) => {
-                if let Some(buffer) = self.current_buffer_mut() {
-                    let settings = Settings::new();
-                    if settings.use_spaces {
-                        let spaces = " ".repeat(settings.tab_size);
-                        buffer.insert_str(self.cursor.position(), &spaces);
-                        self.cursor.col += settings.tab_size;
-                    } else {
-                        buffer.insert_char(self.cursor.position(), '\t');
-                        self.cursor.col += 1;
+                let settings = Settings::new();
+                let pos = self.cursor.position();
+                if settings.use_spaces {
+                    let spaces = " ".repeat(settings.tab_size);
+                    if let Some(buffer) = self.current_buffer_mut() {
+                        buffer.insert_str(pos, &spaces);
                     }
+                    self.cursor.col += settings.tab_size;
+                } else {
+                    if let Some(buffer) = self.current_buffer_mut() {
+                        buffer.insert_char(pos, '\t');
+                    }
+                    self.cursor.col += 1;
                 }
             }
             // Shift+Tab: Dedent
             (KeyModifiers::SHIFT, KeyCode::BackTab) => {
+                let line = self.cursor.line;
                 if let Some(buffer) = self.current_buffer_mut() {
-                    buffer.dedent_line(self.cursor.line, 4);
+                    buffer.dedent_line(line, 4);
                 }
             }
             // Backspace
             (_, KeyCode::Backspace) => {
+                let pos = self.cursor.position();
                 if let Some(buffer) = self.current_buffer_mut() {
-                    if let Some(new_pos) = buffer.backspace(self.cursor.position()) {
+                    if let Some(new_pos) = buffer.backspace(pos) {
                         self.cursor.set_position(new_pos);
                     }
                 }
             }
             // Delete
             (_, KeyCode::Delete) => {
+                let pos = self.cursor.position();
                 if let Some(buffer) = self.current_buffer_mut() {
-                    buffer.delete_char(self.cursor.position());
+                    buffer.delete_char(pos);
                 }
             }
             // Movement keys (stay in insert mode)
@@ -626,12 +656,12 @@ impl App {
             }
             // Normal character
             (_, KeyCode::Char(c)) => {
+                let pos = self.cursor.position();
                 if let Some(buffer) = self.current_buffer_mut() {
-                    let pos = self.cursor.position();
                     buffer.insert_char(pos, c);
-                    self.cursor.col += 1;
-                    self.cursor.preferred_col = None;
                 }
+                self.cursor.col += 1;
+                self.cursor.preferred_col = None;
             }
             _ => {}
         }
@@ -704,7 +734,7 @@ impl App {
                         &lines,
                         BufferPosition::zero(),
                     ) {
-                        self.message = Some(format!("Replace with: "));
+                        self.message = Some("Replace with: ".to_string());
                         // Second phase: enter replacement text
                     }
                 }
@@ -845,8 +875,9 @@ impl App {
                 // Paste selected entry
                 if let Some(text) = self.clipboard.paste_by_index(0) {
                     let text = text.to_string();
+                    let pos = self.cursor.position();
                     if let Some(buffer) = self.current_buffer_mut() {
-                        buffer.insert_str(self.cursor.position(), &text);
+                        buffer.insert_str(pos, &text);
                     }
                 }
                 self.mode = Mode::Normal;
@@ -1031,11 +1062,13 @@ impl App {
             MouseEventKind::Drag(_) => {
                 let col = mouse.column as usize;
                 let row = mouse.row as usize;
+
+                // Adjust for tab bar
                 let editor_row = row.saturating_sub(1);
                 let line_idx = self.view.scroll_y + editor_row;
-                let content_col = col.saturating_sub(self.view.content_start_col()) + self.view.scroll_x;
 
                 if line_idx < self.current_buffer().map_or(0, |b| b.line_count()) {
+                    let content_col = col.saturating_sub(self.view.content_start_col()) + self.view.scroll_x;
                     self.cursor.line = line_idx;
                     self.cursor.col = content_col;
                     self.cursor.clamp_to_line(&self.current_lines());
@@ -1056,15 +1089,15 @@ impl App {
 
 fn print_about() {
     println!();
-    println!("  ╔══════════════════════════════════════╗");
-    println!("  ║                                      ║");
-    println!("  ║       Vertil Nano Pro v{}        ║", VERSION);
-    println!("  ║                                      ║");
-    println!("  ║    Modern Terminal Code Editor       ║");
-    println!("  ║                                      ║");
-    println!("  ║    Created by {}          ║", AUTHOR);
-    println!("  ║                                      ║");
-    println!("  ╚══════════════════════════════════════╝");
+    println!("  +======================================+");
+    println!("  |                                      |");
+    println!("  |       Vertil Nano Pro v{}        |", VERSION);
+    println!("  |                                      |");
+    println!("  |    Modern Terminal Code Editor       |");
+    println!("  |                                      |");
+    println!("  |    Created by {}          |", AUTHOR);
+    println!("  |                                      |");
+    println!("  +======================================+");
     println!();
     println!("  Name:       Vertil Nano Pro");
     println!("  Version:    {}", VERSION);
@@ -1125,8 +1158,9 @@ fn run_editor(files: Vec<PathBuf>) -> io::Result<()> {
                     app.view.resize(width as usize, height as usize);
                 }
                 Event::Paste(text) => {
+                    let pos = app.cursor.position();
                     if let Some(buffer) = app.current_buffer_mut() {
-                        buffer.insert_str(app.cursor.position(), &text);
+                        buffer.insert_str(pos, &text);
                     }
                 }
                 _ => {}
