@@ -193,11 +193,19 @@ impl App {
                 return;
             };
             self.clipboard.copy_line(&line_text);
-            if let Some(buffer) = self.current_buffer_mut() {
+            // Extract cursor adjustment before mutating to avoid borrow conflict
+            let new_cursor_line = if let Some(buffer) = self.current_buffer_mut() {
                 buffer.delete_line(line);
                 if line >= buffer.line_count() {
-                    self.cursor.line = buffer.line_count().saturating_sub(1);
+                    Some(buffer.line_count().saturating_sub(1))
+                } else {
+                    None
                 }
+            } else {
+                None
+            };
+            if let Some(l) = new_cursor_line {
+                self.cursor.line = l;
             }
         }
     }
@@ -220,32 +228,39 @@ impl App {
     }
 
     fn copy_function(&mut self) {
-        if let Some(buffer) = self.current_buffer() {
-            if let Some((start, end)) = buffer.find_function_boundaries(self.cursor.line) {
+        // Extract text from buffer first to avoid borrow conflict with clipboard/message
+        let text = self.current_buffer().and_then(|buffer| {
+            buffer.find_function_boundaries(self.cursor.line).map(|(start, end)| {
                 let lines = buffer.lines();
                 let text: Vec<&str> = lines[start..=end].iter().map(|l| l.as_str()).collect();
-                let text = text.join("\n");
-                self.clipboard.copy_function(&text);
-                self.message = Some("Function copied".to_string());
-            }
+                text.join("\n")
+            })
+        });
+        if let Some(text) = text {
+            self.clipboard.copy_function(&text);
+            self.message = Some("Function copied".to_string());
         }
     }
 
     fn copy_class(&mut self) {
-        if let Some(buffer) = self.current_buffer() {
-            if let Some((start, end)) = buffer.find_class_boundaries(self.cursor.line) {
+        // Extract text from buffer first to avoid borrow conflict with clipboard/message
+        let text = self.current_buffer().and_then(|buffer| {
+            buffer.find_class_boundaries(self.cursor.line).map(|(start, end)| {
                 let lines = buffer.lines();
                 let text: Vec<&str> = lines[start..=end].iter().map(|l| l.as_str()).collect();
-                let text = text.join("\n");
-                self.clipboard.copy_class(&text);
-                self.message = Some("Class copied".to_string());
-            }
+                text.join("\n")
+            })
+        });
+        if let Some(text) = text {
+            self.clipboard.copy_class(&text);
+            self.message = Some("Class copied".to_string());
         }
     }
 
     fn copy_full_file(&mut self) {
-        if let Some(buffer) = self.current_buffer() {
-            let text = buffer.text();
+        // Extract text from buffer first to avoid borrow conflict with clipboard/message
+        let text = self.current_buffer().map(|b| b.text());
+        if let Some(text) = text {
             self.clipboard.copy_file(&text);
             self.message = Some("Full file copied".to_string());
         }
@@ -271,9 +286,9 @@ impl App {
     }
 
     fn show_completions(&mut self) {
-        if let Some(buffer) = self.current_buffer() {
+        // Extract all needed data from buffer first to avoid borrow conflicts
+        let completion_info = self.current_buffer().map(|buffer| {
             let lang = buffer.language_id().to_string();
-            // Get current word prefix before cursor
             let line_text = buffer.line(self.cursor.line).unwrap_or("").to_string();
             let col = self.cursor.col;
             let prefix: String = line_text[..col.min(line_text.len())]
@@ -284,7 +299,10 @@ impl App {
                 .into_iter()
                 .rev()
                 .collect();
+            (lang, prefix)
+        });
 
+        if let Some((lang, prefix)) = completion_info {
             if prefix.len() >= 2 {
                 let completions = self.lsp_client.get_keyword_completions(&lang, &prefix);
                 if !completions.is_empty() {
@@ -461,18 +479,18 @@ impl App {
             }
             // Ctrl+Z: Undo
             KeyCode::Char('z') if mods.contains(KeyModifiers::CONTROL) => {
-                if let Some(buffer) = self.current_buffer_mut() {
-                    if let Some(pos) = buffer.undo() {
-                        self.cursor.set_position(pos);
-                    }
+                // Extract undo position before mutating cursor to avoid borrow conflict
+                let undo_pos = self.current_buffer_mut().and_then(|b| b.undo());
+                if let Some(pos) = undo_pos {
+                    self.cursor.set_position(pos);
                 }
             }
             // Ctrl+Y: Redo
             KeyCode::Char('y') if mods.contains(KeyModifiers::CONTROL) => {
-                if let Some(buffer) = self.current_buffer_mut() {
-                    if let Some(pos) = buffer.redo() {
-                        self.cursor.set_position(pos);
-                    }
+                // Extract redo position before mutating cursor to avoid borrow conflict
+                let redo_pos = self.current_buffer_mut().and_then(|b| b.redo());
+                if let Some(pos) = redo_pos {
+                    self.cursor.set_position(pos);
                 }
             }
             // Ctrl+W: Search
@@ -505,12 +523,13 @@ impl App {
             // Ctrl+D: Duplicate line
             KeyCode::Char('d') if mods.contains(KeyModifiers::CONTROL) => {
                 let line = self.cursor.line;
-                if let Some(buffer) = self.current_buffer_mut() {
-                    buffer.duplicate_line(line);
-                    let line_count = buffer.lines().len();
-                    self.cursor.move_down(&self.current_lines());
-                    let _ = line_count; // buffer still valid
+                // Perform duplicate in buffer, then move cursor separately
+                if let Some(_buffer) = self.current_buffer_mut() {
+                    _buffer.duplicate_line(line);
                 }
+                // Move cursor down after borrow is released
+                let lines = self.current_lines();
+                self.cursor.move_down(&lines);
             }
             // Ctrl+/: Toggle comment
             KeyCode::Char('/') if mods.contains(KeyModifiers::CONTROL) => {
@@ -547,19 +566,19 @@ impl App {
             // Alt+Up: Move line up
             KeyCode::Up if mods.contains(KeyModifiers::ALT) && !mods.contains(KeyModifiers::SHIFT) => {
                 let line = self.cursor.line;
-                if let Some(buffer) = self.current_buffer_mut() {
-                    if let Some(new_line) = buffer.move_line_up(line) {
-                        self.cursor.line = new_line;
-                    }
+                // Extract new line position before mutating cursor to avoid borrow conflict
+                let new_line = self.current_buffer_mut().and_then(|b| b.move_line_up(line));
+                if let Some(nl) = new_line {
+                    self.cursor.line = nl;
                 }
             }
             // Alt+Down: Move line down
             KeyCode::Down if mods.contains(KeyModifiers::ALT) && !mods.contains(KeyModifiers::SHIFT) => {
                 let line = self.cursor.line;
-                if let Some(buffer) = self.current_buffer_mut() {
-                    if let Some(new_line) = buffer.move_line_down(line) {
-                        self.cursor.line = new_line;
-                    }
+                // Extract new line position before mutating cursor to avoid borrow conflict
+                let new_line = self.current_buffer_mut().and_then(|b| b.move_line_down(line));
+                if let Some(nl) = new_line {
+                    self.cursor.line = nl;
                 }
             }
             // Alt+Right: Next tab
@@ -715,10 +734,10 @@ impl App {
             // Backspace
             KeyCode::Backspace => {
                 let pos = self.cursor.position();
-                if let Some(buffer) = self.current_buffer_mut() {
-                    if let Some(new_pos) = buffer.backspace(pos) {
-                        self.cursor.set_position(new_pos);
-                    }
+                // Extract new position before mutating cursor to avoid borrow conflict
+                let new_pos = self.current_buffer_mut().and_then(|b| b.backspace(pos));
+                if let Some(p) = new_pos {
+                    self.cursor.set_position(p);
                 }
             }
             // Tab
@@ -734,26 +753,41 @@ impl App {
     }
 
     fn handle_insert_mode(&mut self, key: KeyEvent) {
+        let mods = key.modifiers;
         match (key.modifiers, key.code) {
             // Escape: back to normal mode
             (_, KeyCode::Esc) => {
                 self.mode = Mode::Normal;
                 self.message = None;
             }
+            // Ctrl+Shift+S: Save As (must be before Ctrl+S)
+            (_, KeyCode::Char('s')) if mods.contains(KeyModifiers::CONTROL) && mods.contains(KeyModifiers::SHIFT) => {
+                self.prev_mode = self.mode;
+                self.mode = Mode::SaveAs;
+                self.command_buffer.clear();
+                self.message = Some("Save as: ".to_string());
+            }
+            // Ctrl+Shift+O: Open file (must be before Ctrl+O)
+            (_, KeyCode::Char('o')) if mods.contains(KeyModifiers::CONTROL) && mods.contains(KeyModifiers::SHIFT) => {
+                self.prev_mode = self.mode;
+                self.mode = Mode::OpenFile;
+                self.command_buffer.clear();
+                self.message = Some("Open file: ".to_string());
+            }
             // Ctrl+O: Save without leaving insert
-            (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
+            (_, KeyCode::Char('o')) if mods.contains(KeyModifiers::CONTROL) => {
                 self.save_file();
             }
             // Ctrl+S: Save
-            (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
+            (_, KeyCode::Char('s')) if mods.contains(KeyModifiers::CONTROL) => {
                 self.save_file();
             }
             // Ctrl+Z: Undo
-            (KeyModifiers::CONTROL, KeyCode::Char('z')) => {
-                if let Some(buffer) = self.current_buffer_mut() {
-                    if let Some(pos) = buffer.undo() {
-                        self.cursor.set_position(pos);
-                    }
+            (_, KeyCode::Char('z')) if mods.contains(KeyModifiers::CONTROL) => {
+                // Extract undo position before mutating cursor to avoid borrow conflict
+                let undo_pos = self.current_buffer_mut().and_then(|b| b.undo());
+                if let Some(pos) = undo_pos {
+                    self.cursor.set_position(pos);
                 }
             }
             // Enter: new line
@@ -822,10 +856,10 @@ impl App {
             // Backspace
             (_, KeyCode::Backspace) => {
                 let pos = self.cursor.position();
-                if let Some(buffer) = self.current_buffer_mut() {
-                    if let Some(new_pos) = buffer.backspace(pos) {
-                        self.cursor.set_position(new_pos);
-                    }
+                // Extract new position before mutating cursor to avoid borrow conflict
+                let new_pos = self.current_buffer_mut().and_then(|b| b.backspace(pos));
+                if let Some(p) = new_pos {
+                    self.cursor.set_position(p);
                 }
             }
             // Delete
@@ -1007,7 +1041,8 @@ impl App {
                 self.message = None;
             }
             KeyCode::Enter => {
-                self.execute_command(&self.command_buffer.clone());
+                let cmd = self.command_buffer.clone();
+                self.execute_command(&cmd);
                 self.mode = Mode::Normal;
             }
             KeyCode::Backspace => {
@@ -1229,9 +1264,9 @@ impl App {
                 }
             }
             KeyCode::Char('d') => {
-                // Show diff of current file
-                if let Some(buffer) = self.current_buffer() {
-                    let filename = buffer.filename().to_string();
+                // Show diff of current file - extract filename first to avoid borrow conflict
+                let filename = self.current_buffer().map(|b| b.filename().to_string());
+                if let Some(filename) = filename {
                     let diff = self.git.format_diff(&filename);
                     let mut output = format!("Git Diff: {}\n", filename);
                     output.push_str(&diff);
@@ -1529,9 +1564,12 @@ impl App {
                 let editor_row = row.saturating_sub(1);
                 let line_idx = self.view.scroll_y + editor_row;
 
+                // Extract line count first to avoid borrow conflict
+                let line_count = self.current_buffer().map_or(0, |b| b.line_count());
+
                 match button {
                     crossterm::event::MouseButton::Left => {
-                        if line_idx < self.current_buffer().map_or(0, |b| b.line_count()) {
+                        if line_idx < line_count {
                             let content_col = col.saturating_sub(self.view.content_start_col()) + self.view.scroll_x;
                             self.cursor.line = line_idx;
                             self.cursor.col = content_col;
@@ -1554,7 +1592,10 @@ impl App {
                 let editor_row = row.saturating_sub(1);
                 let line_idx = self.view.scroll_y + editor_row;
 
-                if line_idx < self.current_buffer().map_or(0, |b| b.line_count()) {
+                // Extract line count first to avoid borrow conflict
+                let line_count = self.current_buffer().map_or(0, |b| b.line_count());
+
+                if line_idx < line_count {
                     let content_col = col.saturating_sub(self.view.content_start_col()) + self.view.scroll_x;
                     self.cursor.line = line_idx;
                     self.cursor.col = content_col;
