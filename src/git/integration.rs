@@ -37,6 +37,7 @@ impl std::fmt::Display for GitFileStatus {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct DiffLine {
     pub old_line: Option<usize>,

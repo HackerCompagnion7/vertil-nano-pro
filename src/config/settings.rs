@@ -59,6 +59,7 @@ impl ColorDef {
     }
 }
 
+#[allow(dead_code)]
 impl Theme {
     pub fn dark() -> Self {
         Self {
@@ -157,6 +158,7 @@ pub struct Settings {
     pub config_path: Option<PathBuf>,
 }
 
+#[allow(dead_code)]
 impl Settings {
     pub fn new() -> Self {
         Self {

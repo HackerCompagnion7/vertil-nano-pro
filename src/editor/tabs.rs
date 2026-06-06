@@ -32,6 +32,7 @@ pub struct TabManager {
     next_id: usize,
 }
 
+#[allow(dead_code)]
 impl TabManager {
     pub fn new() -> Self {
         Self {

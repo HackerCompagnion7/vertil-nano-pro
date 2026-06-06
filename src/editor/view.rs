@@ -10,6 +10,7 @@ pub struct View {
     pub soft_wrap: bool,
 }
 
+#[allow(dead_code)]
 impl View {
     pub fn new(width: usize, height: usize) -> Self {
         Self {

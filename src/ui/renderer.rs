@@ -17,6 +17,7 @@ pub struct Renderer<'a> {
     pub highlight_engine: HighlightEngine,
 }
 
+#[allow(dead_code)]
 impl<'a> Renderer<'a> {
     pub fn new(settings: &'a Settings) -> Self {
         Self {

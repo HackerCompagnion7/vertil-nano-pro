@@ -7,6 +7,7 @@ pub struct Cursor {
     pub preferred_col: Option<usize>,
 }
 
+#[allow(dead_code)]
 impl Cursor {
     pub fn new() -> Self {
         Self {

@@ -13,6 +13,7 @@ pub struct KeybindingSet {
     pub bindings: HashMap<String, Keybinding>,
 }
 
+#[allow(dead_code)]
 impl KeybindingSet {
     pub fn default_bindings() -> Self {
         let mut bindings = HashMap::new();

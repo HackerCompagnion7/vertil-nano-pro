@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use std::time::Instant;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct BufferChange {
     pub kind: ChangeKind,
@@ -10,6 +11,7 @@ pub struct BufferChange {
     pub timestamp: Instant,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ChangeKind {
     Insert,
@@ -71,6 +73,7 @@ pub struct BufferRange {
     pub end: BufferPosition,
 }
 
+#[allow(dead_code)]
 impl BufferRange {
     pub fn new(start: BufferPosition, end: BufferPosition) -> Self {
         if start <= end {
@@ -110,6 +113,7 @@ pub struct Buffer {
     file_encoding: String,
 }
 
+#[allow(dead_code)]
 impl Buffer {
     pub fn new() -> Self {
         Self {

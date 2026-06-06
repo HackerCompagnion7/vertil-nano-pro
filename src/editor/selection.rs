@@ -1,5 +1,6 @@
 use crate::editor::buffer::BufferPosition;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SelectionMode {
     Character,
@@ -17,6 +18,7 @@ pub struct Selection {
     pub block_cursor_col: Option<usize>,
 }
 
+#[allow(dead_code)]
 impl Selection {
     pub fn new() -> Self {
         Self {

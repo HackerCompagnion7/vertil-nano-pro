@@ -65,6 +65,7 @@ struct App {
     keybindings: KeybindingSet,
     show_splash: bool,
     running: bool,
+    clipboard_history_index: usize,
 }
 
 impl App {
@@ -89,6 +90,7 @@ impl App {
             keybindings: KeybindingSet::default(),
             show_splash: true,
             running: true,
+            clipboard_history_index: 0,
         }
     }
 
@@ -260,6 +262,62 @@ impl App {
         }
     }
 
+    fn show_completions(&mut self) {
+        if let Some(buffer) = self.current_buffer() {
+            let lang = buffer.language_id().to_string();
+            // Get current word prefix before cursor
+            let line_text = buffer.line(self.cursor.line).unwrap_or("").to_string();
+            let col = self.cursor.col;
+            let prefix: String = line_text[..col.min(line_text.len())]
+                .chars()
+                .rev()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+
+            if prefix.len() >= 2 {
+                let completions = self.lsp_client.get_keyword_completions(&lang, &prefix);
+                if !completions.is_empty() {
+                    let preview: Vec<String> = completions.iter()
+                        .take(5)
+                        .map(|c| c.label.clone())
+                        .collect();
+                    self.message = Some(format!("Completions: {}", preview.join(", ")));
+                }
+            }
+        }
+    }
+
+    fn search_next_match(&mut self) {
+        if let Some(pattern) = self.search_engine.last_pattern() {
+            let pattern = pattern.to_string();
+            let lines = self.current_lines();
+            if let Some(result) = self.search_engine.search_next(
+                &pattern,
+                &lines,
+                BufferPosition::new(self.cursor.line, self.cursor.col + 1),
+            ) {
+                self.cursor.line = result.line;
+                self.cursor.col = result.col;
+                self.selection.start_selection(
+                    BufferPosition::new(result.line, result.col),
+                    SelectionMode::Character,
+                );
+                self.selection.update_cursor(BufferPosition::new(
+                    result.line,
+                    result.col + result.text.len(),
+                ));
+                self.view.center_on_line(result.line, lines.len());
+            } else {
+                self.message = Some("No more matches".to_string());
+            }
+        } else {
+            self.message = Some("No previous search".to_string());
+        }
+    }
+
     fn handle_normal_mode(&mut self, key: KeyEvent) {
         match (key.modifiers, key.code) {
             // Ctrl+Q: Quit
@@ -396,9 +454,128 @@ impl App {
                 self.tab_manager.prev_tab();
                 self.cursor = Cursor::new();
             }
+            // Ctrl+Shift+S: Save As
+            (KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('s')) => {
+                self.prev_mode = self.mode;
+                self.mode = Mode::SaveAs;
+                self.command_buffer.clear();
+                self.message = Some("Save as: ".to_string());
+            }
+            // Ctrl+Shift+O: Open file
+            (KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('o')) => {
+                self.prev_mode = self.mode;
+                self.mode = Mode::OpenFile;
+                self.command_buffer.clear();
+                self.message = Some("Open file: ".to_string());
+            }
+            // Ctrl+Shift+G: Git Status
+            (KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('g')) => {
+                if self.git.is_available() {
+                    self.mode = Mode::GitStatus;
+                    let status = self.git.format_status();
+                    self.message = Some(format!("Git Status:\n{}\nPress Esc to close", status));
+                } else {
+                    self.message = Some("Not a git repository".to_string());
+                }
+            }
+            // Alt+L: Copy current line
+            (KeyModifiers::ALT, KeyCode::Char('l')) => {
+                self.copy_line();
+            }
+            // Alt+F: Copy function
+            (KeyModifiers::ALT, KeyCode::Char('f')) => {
+                self.copy_function();
+            }
+            // Alt+K: Copy class
+            (KeyModifiers::ALT, KeyCode::Char('k')) => {
+                self.copy_class();
+            }
+            // Alt+Shift+A: Copy full file
+            (KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('a')) => {
+                self.copy_full_file();
+            }
+            // Ctrl+Space: Autocomplete
+            (KeyModifiers::CONTROL, KeyCode::Char(' ')) => {
+                self.show_completions();
+            }
+            // Alt+W: Search next (repeat last search)
+            (KeyModifiers::ALT, KeyCode::Char('w')) => {
+                self.search_next_match();
+            }
+            // Ctrl+Shift+W: Close current tab
+            (KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('w')) => {
+                self.tab_manager.close_current();
+                self.cursor = Cursor::new();
+                self.selection.clear();
+            }
+            // Ctrl+Home: Buffer start
+            (KeyModifiers::CONTROL, KeyCode::Home) => {
+                self.cursor.move_to_buffer_start();
+            }
+            // Ctrl+End: Buffer end
+            (KeyModifiers::CONTROL, KeyCode::End) => {
+                let lines = self.current_lines();
+                self.cursor.move_to_buffer_end(&lines);
+            }
+            // Ctrl+Left: Word backward
+            (KeyModifiers::CONTROL, KeyCode::Left) => {
+                let lines = self.current_lines();
+                self.cursor.move_word_backward(&lines);
+            }
+            // Ctrl+Right: Word forward
+            (KeyModifiers::CONTROL, KeyCode::Right) => {
+                let lines = self.current_lines();
+                self.cursor.move_word_forward(&lines);
+            }
+            // Alt+Shift+L: Select line mode
+            (KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('l')) => {
+                let line = self.cursor.line;
+                let line_content = self.current_buffer()
+                    .and_then(|b| b.line(line))
+                    .unwrap_or("")
+                    .to_string();
+                self.selection.start_selection(
+                    BufferPosition::new(line, 0),
+                    SelectionMode::Line,
+                );
+                self.selection.select_line(line, &line_content);
+            }
+            // Alt+Shift+F: Select function
+            (KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('f')) => {
+                if let Some(buffer) = self.current_buffer() {
+                    if let Some((start, end)) = buffer.find_function_boundaries(self.cursor.line) {
+                        self.selection.start_selection(
+                            BufferPosition::new(start, 0),
+                            SelectionMode::Character,
+                        );
+                        self.selection.update_cursor(BufferPosition::new(end, buffer.line(end).map_or(0, |l| l.len())));
+                        self.message = Some(format!("Selected function: lines {}-{}", start + 1, end + 1));
+                    }
+                }
+            }
+            // Alt+Shift+K: Select class
+            (KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('k')) => {
+                if let Some(buffer) = self.current_buffer() {
+                    if let Some((start, end)) = buffer.find_class_boundaries(self.cursor.line) {
+                        self.selection.start_selection(
+                            BufferPosition::new(start, 0),
+                            SelectionMode::Character,
+                        );
+                        self.selection.update_cursor(BufferPosition::new(end, buffer.line(end).map_or(0, |l| l.len())));
+                        self.message = Some(format!("Selected class: lines {}-{}", start + 1, end + 1));
+                    }
+                }
+            }
             // F1: Help
             (_, KeyCode::F(1)) => {
                 self.mode = Mode::Help;
+                let bindings = self.keybindings.all_bindings();
+                let mut help_text = String::from("=== Vertil Nano Pro Keybindings ===\n\n");
+                for kb in &bindings {
+                    help_text.push_str(&format!("  {:20} {} - {}\n", kb.key, kb.action, kb.description));
+                }
+                help_text.push_str("\nPress Esc to close");
+                self.message = Some(help_text);
             }
 
             // Movement keys
@@ -726,26 +903,57 @@ impl App {
                 self.message = None;
             }
             KeyCode::Enter => {
-                // If we have a search term but no replace term, search first
-                if !self.search_buffer.is_empty() {
+                if self.replace_buffer.is_empty() && !self.search_buffer.is_empty() {
+                    // Phase transition: search term done, now entering replacement
+                    self.message = Some("Replace with: ".to_string());
+                } else if !self.search_buffer.is_empty() {
+                    // Phase 2 done: perform the replacement
                     let lines = self.current_lines();
-                    if let Some(_result) = self.search_engine.search_next(
-                        &self.search_buffer,
+                    let changed = self.search_engine.replace_in_buffer(
                         &lines,
-                        BufferPosition::zero(),
-                    ) {
-                        self.message = Some("Replace with: ".to_string());
-                        // Second phase: enter replacement text
+                        &self.search_buffer,
+                        &self.replace_buffer,
+                    );
+                    if changed.is_empty() {
+                        self.message = Some("No matches found".to_string());
+                    } else {
+                        let count = changed.len();
+                        for (line_idx, new_line) in &changed {
+                            if let Some(buffer) = self.current_buffer_mut() {
+                                if let Some(l) = buffer.line_mut(*line_idx) {
+                                    *l = new_line.clone();
+                                }
+                            }
+                        }
+                        self.message = Some(format!("Replaced {} occurrences", count));
                     }
+                    self.mode = Mode::Normal;
                 }
             }
             KeyCode::Backspace => {
-                self.search_buffer.pop();
-                self.message = Some(format!("Search: {}", self.search_buffer));
+                if self.replace_buffer.is_empty() {
+                    self.search_buffer.pop();
+                    self.message = Some(format!("Search: {}", self.search_buffer));
+                } else {
+                    self.replace_buffer.pop();
+                    self.message = Some(format!("Replace with: {}", self.replace_buffer));
+                }
             }
             KeyCode::Char(c) => {
-                self.search_buffer.push(c);
-                self.message = Some(format!("Search: {}", self.search_buffer));
+                if self.replace_buffer.is_empty() && !self.search_buffer.is_empty() {
+                    // Check if we're in phase 2 (user pressed Enter already)
+                    // We use a simple heuristic: if search buffer is non-empty and this is a new char after Enter
+                    self.search_buffer.push(c);
+                    self.message = Some(format!("Search: {}", self.search_buffer));
+                } else if !self.replace_buffer.is_empty() {
+                    // Phase 2: entering replacement
+                    self.replace_buffer.push(c);
+                    self.message = Some(format!("Replace with: {}", self.replace_buffer));
+                } else {
+                    // Phase 1: entering search term
+                    self.search_buffer.push(c);
+                    self.message = Some(format!("Search: {}", self.search_buffer));
+                }
             }
             _ => {}
         }
@@ -861,27 +1069,133 @@ impl App {
     }
 
     fn handle_clipboard_history_mode(&mut self, key: KeyEvent) {
+        let entry_count = self.clipboard.entry_count();
         match key.code {
             KeyCode::Esc => {
+                self.clipboard_history_index = 0;
                 self.mode = Mode::Normal;
                 self.message = None;
             }
             KeyCode::Up => {
-                // Navigate up in clipboard history
+                if self.clipboard_history_index > 0 {
+                    self.clipboard_history_index -= 1;
+                }
+                if entry_count > 0 {
+                    let idx = self.clipboard_history_index.min(entry_count - 1);
+                    if let Some(entry) = self.clipboard.recent_entries(entry_count).get(idx) {
+                        let preview = ClipboardManager::format_entry_preview(&entry.text, 60);
+                        self.message = Some(format!("[{}/{}] {}: {}",
+                            idx + 1, entry_count, entry.kind, preview));
+                    }
+                }
             }
             KeyCode::Down => {
-                // Navigate down in clipboard history
+                if self.clipboard_history_index < entry_count.saturating_sub(1) {
+                    self.clipboard_history_index += 1;
+                }
+                if entry_count > 0 {
+                    let idx = self.clipboard_history_index.min(entry_count - 1);
+                    if let Some(entry) = self.clipboard.recent_entries(entry_count).get(idx) {
+                        let preview = ClipboardManager::format_entry_preview(&entry.text, 60);
+                        self.message = Some(format!("[{}/{}] {}: {}",
+                            idx + 1, entry_count, entry.kind, preview));
+                    }
+                }
             }
             KeyCode::Enter => {
-                // Paste selected entry
-                if let Some(text) = self.clipboard.paste_by_index(0) {
+                let idx = self.clipboard_history_index;
+                if let Some(text) = self.clipboard.paste_by_index(idx) {
                     let text = text.to_string();
                     let pos = self.cursor.position();
                     if let Some(buffer) = self.current_buffer_mut() {
                         buffer.insert_str(pos, &text);
                     }
                 }
+                self.clipboard_history_index = 0;
                 self.mode = Mode::Normal;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_saveas_mode(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.message = None;
+            }
+            KeyCode::Enter => {
+                self.save_as(&self.command_buffer);
+            }
+            KeyCode::Backspace => {
+                self.command_buffer.pop();
+                self.message = Some(format!("Save as: {}", self.command_buffer));
+            }
+            KeyCode::Char(c) => {
+                self.command_buffer.push(c);
+                self.message = Some(format!("Save as: {}", self.command_buffer));
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_openfile_mode(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.message = None;
+            }
+            KeyCode::Enter => {
+                let path = PathBuf::from(&self.command_buffer);
+                if path.exists() {
+                    self.open_file(path);
+                } else {
+                    self.message = Some(format!("File not found: {}", self.command_buffer));
+                }
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Backspace => {
+                self.command_buffer.pop();
+                self.message = Some(format!("Open file: {}", self.command_buffer));
+            }
+            KeyCode::Char(c) => {
+                self.command_buffer.push(c);
+                self.message = Some(format!("Open file: {}", self.command_buffer));
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_gitstatus_mode(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                self.message = None;
+            }
+            KeyCode::Char('l') => {
+                // Show git log
+                match self.git.log(10) {
+                    Ok(entries) => {
+                        let mut output = String::from("Git Log:\n");
+                        for (id, msg, author) in &entries {
+                            output.push_str(&format!("  {} {} ({})\n", id, msg, author));
+                        }
+                        output.push_str("\nPress Esc to close");
+                        self.message = Some(output);
+                    }
+                    Err(e) => self.message = Some(format!("Error: {}", e)),
+                }
+            }
+            KeyCode::Char('d') => {
+                // Show diff of current file
+                if let Some(buffer) = self.current_buffer() {
+                    let filename = buffer.filename().to_string();
+                    let diff = self.git.format_diff(&filename);
+                    let mut output = format!("Git Diff: {}\n", filename);
+                    output.push_str(&diff);
+                    output.push_str("\nPress Esc to close");
+                    self.message = Some(output);
+                }
             }
             _ => {}
         }
@@ -1006,6 +1320,54 @@ impl App {
                     }
                 }
             }
+            "saveas" => {
+                if parts.len() > 1 {
+                    let path = parts[1..].join(" ");
+                    self.save_as(&path);
+                } else {
+                    self.message = Some("Usage: saveas <path>".to_string());
+                }
+            }
+            "open" => {
+                if parts.len() > 1 {
+                    let path = PathBuf::from(parts[1..].join(" "));
+                    if path.exists() {
+                        self.open_file(path);
+                    } else {
+                        self.message = Some(format!("File not found: {}", parts[1..].join(" ")));
+                    }
+                } else {
+                    self.message = Some("Usage: open <path>".to_string());
+                }
+            }
+            "copyline" => {
+                self.copy_line();
+            }
+            "copyfunc" => {
+                self.copy_function();
+            }
+            "copyclass" => {
+                self.copy_class();
+            }
+            "copyall" => {
+                self.copy_full_file();
+            }
+            "complete" | "autocomplete" => {
+                self.show_completions();
+            }
+            "tabclose" | "closetab" => {
+                self.tab_manager.close_current();
+                self.cursor = Cursor::new();
+                self.selection.clear();
+            }
+            "keys" | "keybindings" => {
+                let bindings = self.keybindings.all_bindings();
+                let mut output = String::from("Keybindings:\n");
+                for kb in &bindings {
+                    output.push_str(&format!("  {:20} {}\n", kb.key, kb.description));
+                }
+                self.message = Some(output);
+            }
             _ => {
                 self.message = Some(format!("Unknown command: {}", parts[0]));
             }
@@ -1027,8 +1389,9 @@ impl App {
             Mode::GoToLine => self.handle_goto_line_mode(key),
             Mode::Help => self.handle_help_mode(key),
             Mode::ClipboardHistory => self.handle_clipboard_history_mode(key),
-            Mode::SaveAs | Mode::OpenFile => self.handle_command_mode(key),
-            Mode::GitStatus => self.handle_help_mode(key),
+            Mode::SaveAs => self.handle_saveas_mode(key),
+            Mode::OpenFile => self.handle_openfile_mode(key),
+            Mode::GitStatus => self.handle_gitstatus_mode(key),
             Mode::About => self.handle_help_mode(key),
         }
     }
@@ -1125,16 +1488,18 @@ fn run_editor(files: Vec<PathBuf>) -> io::Result<()> {
         }
     }
 
-    // Show splash screen briefly
-    renderer.render_splash()?;
-    let _ = event::read(); // Wait for any key
+    // Show splash screen briefly if enabled
+    if app.show_splash {
+        renderer.render_splash()?;
+        let _ = event::read(); // Wait for any key
+        app.show_splash = false;
+    }
 
     // Main event loop
     while app.running {
         // Render
         let message = app.message.as_deref();
-        if let Some(tab) = app.tab_manager.active() {
-            let _lines = tab.buffer.lines().to_vec();
+        if app.tab_manager.active().is_some() {
             renderer.render(
                 &app.tab_manager,
                 &mut app.view,
@@ -1180,7 +1545,7 @@ fn main() {
     let cli = clap::Command::new("Vertil Nano Pro")
         .version(VERSION)
         .author(AUTHOR)
-        .about("Modern terminal code editor — simple like Nano, powerful for 2026")
+        .about("Modern terminal code editor -- simple like Nano, powerful for 2026")
         .arg(
             clap::Arg::new("files")
                 .help("Files to open")
